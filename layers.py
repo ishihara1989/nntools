@@ -95,7 +95,7 @@ class InfusedResBlock1d(nn.Module):
 class StackedInfusedResBlock1d(nn.Module):
     def __init__(self, base_dim, layers):
         super(StackedInfusedResBlock1d, self).__init__()
-        self.layers = nn.ModuleList([InfusedResBlock(base_dim) for _ in range(layers)])
+        self.layers = nn.ModuleList([InfusedResBlock1d(base_dim) for _ in range(layers)])
     
     def forward(self, x, cond):
         l = len(self.layers)
