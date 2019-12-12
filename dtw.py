@@ -1,6 +1,6 @@
-'''
-from https://github.com/Sleepwalking/pytorch-softdtw
-'''
+import os.path
+from pathlib import Path
+
 import numpy as np
 import torch
 from numba import jit
@@ -8,9 +8,11 @@ from torch.autograd import Function
 
 from torch.utils.cpp_extension import load
 try:
-    dtw = load(name='dtw', sources=['soft_dtw_src/dtw_cuda.cpp', 'soft_dtw_src/dtw_cuda_kernel.cu'])
+    import os.path
+    root = Path(__file__).resolve().parent
+    dtw_cuda = load(name='dtw_cuda', sources=[root/'soft_dtw_src/dtw_cuda.cpp', root/'soft_dtw_src/dtw_cuda_kernel.cu'])
     DTW_CUDA_SUCCEED = True
-except Error as e:
+except Exception as e:
     DTW_CUDA_SUCCEED = False
     print(e)
     print('cuda DTW load failed')
@@ -59,6 +61,9 @@ def compute_softdtw_backward(D_, R, gamma):
     return E[:, 1:N + 1, 1:M + 1]
 
 class _SoftDTW(Function):
+    '''
+    from https://github.com/Sleepwalking/pytorch-softdtw
+    '''
     @staticmethod
     def forward(ctx, D, gamma):
         dev = D.device
@@ -85,13 +90,13 @@ class _SoftDTW(Function):
 class _SoftDTWCuda(Function):
     @staticmethod
     def forward(ctx, D, gamma):
-        R = dtw.forward(D, gamma)
+        R = dtw_cuda.forward(D, gamma)
         ctx.save_for_backward(D, R, torch.as_tensor(gamma))
         return R[:, -1, -1]
 
     @staticmethod
     def backward(ctx, grad_output):
-        E = dtw.backward(*ctx.saved_tensors)
+        E = dtw_cuda.backward(*ctx.saved_tensors)
         return grad_output[:, None, None] * E, None
 
 class SoftDTW(torch.nn.Module):
@@ -101,7 +106,16 @@ class SoftDTW(torch.nn.Module):
         self.gamma=gamma
 
     def calc_distance_matrix(self, x, y):
-        return (x[:, :, :, None]- y[:, :, None, :]).pow(2).sum(dim=1)
+        # return torch.pow(x[:, :, :, None]- y[:, :, None, :], 2).sum(dim=1) # CUDA error: invalid configuration argument
+        n = x.size(2)
+        m = y.size(2)
+        d = x.size(1)
+        x = x.unsqueeze(3).expand(-1, d, n, m)
+        y = y.unsqueeze(2).expand(-1, d, n, m)
+        diff = x - y
+        p = diff*diff
+        dist = p.sum(1)
+        return dist
 
     def forward(self, x, y):
         func_dtw = _SoftDTWCuda.apply if DTW_CUDA_SUCCEED and x.is_cuda else _SoftDTW.apply
@@ -125,9 +139,10 @@ class SoftDTW(torch.nn.Module):
             result = out_xy # discrepancy
         return result.squeeze(0) if squeeze else result
 
+
 if __name__ == "__main__":
-    x = torch.randn(1,4,3, requires_grad=True)
-    y = torch.randn(1,4,2, requires_grad=True)
+    x = torch.randn(1,4,513, requires_grad=True)
+    y = torch.randn(1,4,1027, requires_grad=True)
     loss_fun = SoftDTW()
     loss = loss_fun(x, y)
     print(loss)

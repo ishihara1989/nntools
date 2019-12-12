@@ -25,7 +25,7 @@ def longest_pair_collate(batch):
         bx[i, :len(x)] = x[...]
         by[i, :len(y)] = y[...]
 
-    return bx, by
+    return torch.as_tensor(bx), torch.as_tensor(by)
 
 class AudioDataset(torch.utils.data.Dataset):
     def __init__(self, roots, segment_length=16384):
