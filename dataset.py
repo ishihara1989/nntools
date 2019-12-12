@@ -13,6 +13,20 @@ def infinit_iterator(dataloader):
         for batch in dataloader:
             yield batch
 
+def longest_pair_collate(batch):
+    max_len_x, max_len_y = 0, 0
+    for x, y in batch:
+        max_len_x = max(max_len_x, len(x))
+        max_len_y = max(max_len_y, len(y))
+
+    bx = np.zeros([len(batch), max_len_x], dtype=np.float32)
+    by = np.zeros([len(batch), max_len_y], dtype=np.float32)
+    for i, (x, y) in enumerate(batch):
+        bx[i, :len(x)] = x[...]
+        by[i, :len(y)] = y[...]
+
+    return bx, by
+
 class AudioDataset(torch.utils.data.Dataset):
     def __init__(self, roots, segment_length=16384):
         self.paths = []
@@ -103,10 +117,11 @@ if __name__ == "__main__":
 
     groups = torch.load('text_group_list.pt')
     dataset = ParallelDataset('../data/vctk-preprocess/wavs/wav_16k/', groups)
+
     train_loader = DataLoader(dataset, num_workers=8, shuffle=False,
-                              batch_size=1,
+                              batch_size=4,
                               pin_memory=False,
-                              drop_last=True)
+                              drop_last=True, collate_fn=longest_pair_collate)
 
     for i, batch in enumerate(train_loader):
         x, y = batch
