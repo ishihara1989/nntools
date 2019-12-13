@@ -106,16 +106,7 @@ class SoftDTW(torch.nn.Module):
         self.gamma=gamma
 
     def calc_distance_matrix(self, x, y):
-        # return torch.pow(x[:, :, :, None]- y[:, :, None, :], 2).sum(dim=1) # CUDA error: invalid configuration argument
-        n = x.size(2)
-        m = y.size(2)
-        d = x.size(1)
-        x = x.unsqueeze(3).expand(-1, d, n, m)
-        y = y.unsqueeze(2).expand(-1, d, n, m)
-        diff = x - y
-        p = diff*diff
-        dist = p.sum(1)
-        return dist
+        return torch.pow(x[:, :, :, None]- y[:, :, None, :], 2).sum(dim=1)
 
     def forward(self, x, y):
         func_dtw = _SoftDTWCuda.apply if DTW_CUDA_SUCCEED and x.is_cuda else _SoftDTW.apply

@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-__all__ = ['xavier_uniform', 'wn_xavier', 'calc_kernel_minimum_variance', 'calc_cross_utterance_speaker_code']
+__all__ = ['xavier_uniform', 'wn_xavier', 'calc_kernel_minimum_variance', 'calc_cross_utterance_speaker_code', 'large_margin_cosine_loss']
 
 def xavier_uniform(layer, w_init_gain='linear'):
     nn.init.xavier_uniform_(layer.weight, gain=nn.init.calculate_gain(w_init_gain))
@@ -34,3 +35,12 @@ def calc_cross_utterance_speaker_code(log_confidence, speaker_code_sample):
     mask = torch.ones([u_dim, u_dim], device=speaker_code_sample.device) - torch.eye(u_dim, device=speaker_code_sample.device)
     speaker_code = torch.einsum('suft,sugt,ui->sug', confidence, speaker_code_sample, mask) / torch.einsum('suft,ui->suf', confidence, mask)
     return speaker_code.contiguous()
+
+def large_margin_cosine_loss(feature, margin=0.05, s=4):
+    # feature: SxUxF
+    s_dim, u_dim, f_dim = feature.size()
+    n = F.normalize(feature, dim=2)
+    cossim = torch.einsum('suf,tvf->stuv', n, n)
+    label = torch.eye(s_dim, device=feature.device)
+    m = margin*label
+    return F.cross_entropy(torch.exp(s*(cossim - m[:, :, None, None])), torch.arange(s_dim, device=feature.device)[:,None, None].expand(s_dim, u_dim, u_dim))
