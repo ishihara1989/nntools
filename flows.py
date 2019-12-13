@@ -1,8 +1,11 @@
 import numpy as np
 import scipy
+import scipy.linalg
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+import utils
 
 __all__ = ['ChannelShuffle']
 
@@ -13,7 +16,9 @@ class ChannelShuffle(nn.Module):
     def __init__(self, num_channels, rank=2, LU_decomposed=False):
         super().__init__()
         if rank > 2:
-            raise ValueError("rank>2 is not supported")
+            raise ValueError("rank > 2 is not supported")
+        if rank < 0:
+            raise ValueError("rank < 0 is not supported")
         self.rank = rank
         w_shape = [num_channels, num_channels]
         w_init = np.linalg.qr(np.random.randn(*w_shape))[0].astype(np.float32)
@@ -39,45 +44,45 @@ class ChannelShuffle(nn.Module):
         self.w_shape = w_shape
         self.LU = LU_decomposed
 
-    def get_weight(self, input, reverse):
+    def get_weight(self, x, invert):
         w_shape = self.w_shape
         if not self.LU:
-            sizes=input.size()
+            sizes=x.size()
             pixels = sizes[0] # prod(sizes[0], sizes[2:])
             if len(sizes) > 2:
                 for s in sizes[2:]:
                     pixels *= s
             dlogdet = torch.slogdet(self.weight)[1] * pixels
             na = [1 for _ in range(len(sizes)-2)]
-            if not reverse:
+            if not invert:
                 weight = self.weight.view(*w_shape, *na)
             else:
                 weight = torch.inverse(self.weight.double()).float().view(*w_shape, *na)
             return weight, dlogdet
         else:
-            self.p = self.p.to(input.device)
-            self.sign_s = self.sign_s.to(input.device)
-            self.l_mask = self.l_mask.to(input.device)
-            self.eye = self.eye.to(input.device)
+            self.p = self.p.to(x.device)
+            self.sign_s = self.sign_s.to(x.device)
+            self.l_mask = self.l_mask.to(x.device)
+            self.eye = self.eye.to(x.device)
             l = self.l * self.l_mask + self.eye
             u = self.u * self.l_mask.transpose(0, 1).contiguous() + torch.diag(self.sign_s * torch.exp(self.log_s))
-            sizes=input.size()
+            sizes = x.size()
             pixels = sizes[0]
             if len(sizes) > 2:
                 for s in sizes[2:]:
                     pixels *= s
             dlogdet = torch.sum(self.log_s) * pixels
             na = [1 for _ in range(len(sizes)-2)]
-            if not reverse:
+            if not invert:
                 w = torch.matmul(self.p, torch.matmul(l, u))
             else: # @@
-                l = torch.inverse(l.double()).float()
-                u = torch.inverse(u.double()).float()
-                w = torch.matmul(u, torch.matmul(l, self.p.inverse()))
+                li = torch.inverse(l.double()).float()
+                ui = torch.inverse(u.double()).float()
+                w = torch.matmul(ui, torch.matmul(li, self.p.inverse()))
             return w.view(*w_shape, *na), dlogdet
 
-    def forward(self, input, logdet=None, reverse=False):
-        weight, dlogdet = self.get_weight(input, reverse)
+    def forward(self, x, logdet=None, invert=False):
+        weight, dlogdet = self.get_weight(x, invert)
         if self.rank == 0:
             func = F.linear
         elif self.rank == 1:
@@ -85,13 +90,140 @@ class ChannelShuffle(nn.Module):
         elif self.rank == 2:
             func = F.conv2d
 
-        if not reverse:
-            z = func(input, weight)
+        if not invert:
+            z = func(x, weight)
             if logdet is not None:
                 logdet = logdet + dlogdet
-            return z, logdet
+                return z, logdet
+            else:
+                return z
         else:
-            z = func(input, weight)
+            z = func(x, weight)
             if logdet is not None:
                 logdet = logdet - dlogdet
-            return z, logdet
+                return z, logdet
+            else:
+                return z
+
+def test_iconv(use_lu=True):
+    c_size = 2
+    b_size = 1
+    s_size = 3
+    iconv = ChannelShuffle(c_size, 0, use_lu)
+    x = torch.randn(b_size,c_size)
+    z = iconv(x)
+    x2 = iconv(z, invert=True)
+    print(f'0d: {(x-x2).pow(2).sum()}')
+    iconv = ChannelShuffle(c_size, 1, use_lu)
+    x = torch.randn(b_size,c_size,s_size)
+    z = iconv(x)
+    x2 = iconv(z, invert=True)
+    print(f'1d: {(x-x2).pow(2).sum()}')
+    iconv = ChannelShuffle(c_size, 2, use_lu)
+    x = torch.randn(b_size,c_size,s_size,s_size)
+    z = iconv(x)
+    x2 = iconv(z, invert=True)
+    print(f'2d: {(x-x2).pow(2).sum()}')
+
+
+class AffineCoupling(nn.Module):
+    def __init__(self, out_channels, inner_channels=None, layers=3, rank=2, zero_init=True, net=None):
+        super().__init__()
+        if rank<0 or rank > 2:
+            raise ValueError("supported rank: 0 <= rank <= 2")
+        if net is not None:
+            self.net = net
+        else:
+            if inner_channels is None:
+                raise ValueError("either `net` or `inner_channels` must be given")
+            kwargs = {} if rank==0 else {'kernel_size': 3, 'padding': 1}
+            conv = nn.Linear if rank==0 else nn.Conv1d if rank==1 else nn.Conv2d
+            modules = [utils.wn_xavier(conv(out_channels, inner_channels, **kwargs)), nn.ELU()]
+            for _ in range(layers):
+                modules.append(utils.wn_xavier(conv(inner_channels, inner_channels, **kwargs)))
+                modules.append(nn.ELU())
+            end = conv(inner_channels, 2*out_channels, **kwargs)
+            if zero_init:
+                end.weight.data.zero_()
+                end.bias.data.zero_()
+            modules.append(end)
+            self.net = nn.Sequential(*modules)
+        self.alpha = nn.Parameter(torch.ones(out_channels))
+        self.beta = nn.Parameter(torch.zeros(out_channels))
+        self.rank = rank
+
+    def forward(self, x, logdet=None, invert=False):
+        x_0, x_1 = x.chunk(2, dim=1)
+        r = self.net(x_0)
+        log_s, t = r.chunk(2, dim=1)
+        s_size = log_s.size(1)
+        alpha = self.alpha.view(1, s_size, *[1 for _ in range(self.rank)])
+        beta = self.beta.view(1, s_size, *[1 for _ in range(self.rank)])
+        log_s = alpha*torch.tanh(log_s) + beta
+        
+        if not invert:
+            s = torch.exp(log_s)
+            z = torch.cat([x_0, s*x_1+t], dim=1)
+            if logdet is not None:
+                dlogdet = log_s.sum()
+                logdet = logdet + dlogdet
+                return z, logdet
+            else:
+                return z
+        else:
+            si = torch.exp(-log_s)
+            z = torch.cat([x_0, (x_1-t)*si], dim=1)
+            if logdet is not None:
+                dlogdet = log_s.sum()
+                logdet = logdet - dlogdet
+                return z, logdet
+            else:
+                return z
+
+def test_ac():
+    b_size = 20
+    c_size = 4
+    h_size = 8
+    s_size = 40
+    ac = AffineCoupling(c_size, h_size, rank=0, zero_init=False)
+    x = torch.randn(b_size, 2*c_size)
+    z, ld = ac(x, 0)
+    x2 = ac(z, invert=True)
+    print(f'0d: {(x-x2).pow(2).sum()}, {ld/b_size}')
+    ac = AffineCoupling(c_size, h_size, rank=1, zero_init=False)
+    x = torch.randn(b_size,2*c_size,s_size)
+    z, ld = ac(x, 0)
+    x2 = ac(z, invert=True)
+    print(f'1d: {(x-x2).pow(2).sum()}, {ld/b_size/s_size}')
+    ac = AffineCoupling(c_size, h_size, rank=2, zero_init=False)
+    x = torch.randn(b_size,2*c_size,s_size,s_size)
+    z, ld = ac(x, 0)
+    x2 = ac(z, invert=True)
+    print(f'2d: {(x-x2).pow(2).sum()}, {ld/b_size/s_size**2}')
+
+    net = nn.Linear(c_size, 2*c_size)
+    ac = AffineCoupling(c_size, rank=0, net=net)
+    x = torch.randn(b_size, 2*c_size)
+    z, ld = ac(x, 0)
+    x2 = ac(z, invert=True)
+    print(f'net: {(x-x2).pow(2).sum()}, {ld/b_size}')
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv)>1:
+        kind = sys.argv[1]
+    else:
+        kind = 'all'
+
+    is_all = kind == 'all'
+    if kind == 'iconv' or is_all:
+        print('iconv', '*'*50)
+        test_iconv(True)
+        test_iconv(False)
+        print('*'*60)
+
+    if kind == 'affine' or is_all:
+        print('affile', '*'*50)
+        test_ac()
+        print('*'*60)
