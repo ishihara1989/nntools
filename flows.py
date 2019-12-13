@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 import utils
 
-__all__ = ['ChannelShuffle']
+__all__ = ['ChannelShuffle', 'AffineCoupling']
 
 class ChannelShuffle(nn.Module):
     """
@@ -15,10 +15,8 @@ class ChannelShuffle(nn.Module):
     """
     def __init__(self, num_channels, rank=2, LU_decomposed=False):
         super().__init__()
-        if rank > 2:
-            raise ValueError("rank > 2 is not supported")
-        if rank < 0:
-            raise ValueError("rank < 0 is not supported")
+        if rank<0 or rank > 3:
+            raise ValueError("supported rank: 0 <= rank <= 3")
         self.rank = rank
         w_shape = [num_channels, num_channels]
         w_init = np.linalg.qr(np.random.randn(*w_shape))[0].astype(np.float32)
@@ -89,6 +87,10 @@ class ChannelShuffle(nn.Module):
             func = F.conv1d
         elif self.rank == 2:
             func = F.conv2d
+        elif self.rank == 3:
+            func = F.conv3d
+        else:
+            raise ValueError(f"invalid rank: {self.rank}")
 
         if not invert:
             z = func(x, weight)
@@ -124,20 +126,34 @@ def test_iconv(use_lu=True):
     z = iconv(x)
     x2 = iconv(z, invert=True)
     print(f'2d: {(x-x2).pow(2).sum()}')
+    iconv = ChannelShuffle(c_size, 3, use_lu)
+    x = torch.randn(b_size,c_size,s_size,s_size,s_size)
+    z = iconv(x)
+    x2 = iconv(z, invert=True)
+    print(f'3d: {(x-x2).pow(2).sum()}')
 
 
 class AffineCoupling(nn.Module):
     def __init__(self, out_channels, inner_channels=None, layers=3, rank=2, zero_init=True, net=None):
         super().__init__()
-        if rank<0 or rank > 2:
-            raise ValueError("supported rank: 0 <= rank <= 2")
+        if rank<0 or rank > 3:
+            raise ValueError("supported rank: 0 <= rank <= 3")
         if net is not None:
             self.net = net
         else:
             if inner_channels is None:
                 raise ValueError("either `net` or `inner_channels` must be given")
             kwargs = {} if rank==0 else {'kernel_size': 3, 'padding': 1}
-            conv = nn.Linear if rank==0 else nn.Conv1d if rank==1 else nn.Conv2d
+            if rank == 0:
+                conv = nn.Linear
+            elif rank == 1:
+                conv = nn.Conv1d
+            elif rank == 2:
+                conv = nn.Conv2d
+            elif rank == 3:
+                conv = nn.Conv3d
+            else:
+                raise ValueError(f"invalid rank: {rank}")
             modules = [utils.wn_xavier(conv(out_channels, inner_channels, **kwargs)), nn.ELU()]
             for _ in range(layers):
                 modules.append(utils.wn_xavier(conv(inner_channels, inner_channels, **kwargs)))
@@ -184,7 +200,7 @@ def test_ac():
     b_size = 20
     c_size = 4
     h_size = 8
-    s_size = 40
+    s_size = 10
     ac = AffineCoupling(c_size, h_size, rank=0, zero_init=False)
     x = torch.randn(b_size, 2*c_size)
     z, ld = ac(x, 0)
@@ -200,6 +216,11 @@ def test_ac():
     z, ld = ac(x, 0)
     x2 = ac(z, invert=True)
     print(f'2d: {(x-x2).pow(2).sum()}, {ld/b_size/s_size**2}')
+    ac = AffineCoupling(c_size, h_size, rank=3, zero_init=False)
+    x = torch.randn(b_size,2*c_size,s_size,s_size,s_size)
+    z, ld = ac(x, 0)
+    x2 = ac(z, invert=True)
+    print(f'3d: {(x-x2).pow(2).sum()}, {ld/b_size/s_size**2}')
 
     net = nn.Linear(c_size, 2*c_size)
     ac = AffineCoupling(c_size, rank=0, net=net)
