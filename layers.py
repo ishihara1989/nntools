@@ -137,11 +137,11 @@ class MemoryNet(nn.Module):
         # mask: bxmxn | 1xmxn
         # ret: bxcxm
         n_head = self.n_head
+        q_shape = q.size()
+        k_shape = k.size()
+        v_shape = v.size()
         if n_head > 1:
             q, k, v = q.contiguous(), k.contiguous(), v.contiguous()
-            q_shape = q.size()
-            k_shape = k.size()
-            v_shape = v.size()
             q = q.view(*q_shape[:-2], n_head, q_shape[-2]//n_head, q_shape[-1])
             k = k.view(*k_shape[:-2], n_head, k_shape[-2]//n_head, k_shape[-1])
             v = v.view(*v_shape[:-2], n_head, v_shape[-2]//n_head, v_shape[-1])
@@ -162,6 +162,23 @@ class MemoryNet(nn.Module):
         else:
             return ret
 
+    def softmax(self, q, k, mask=None):
+        n_head = self.n_head
+        q_shape = q.size()
+        k_shape = k.size()
+        if n_head > 1:
+            q, k = q.contiguous(), k.contiguous()
+            q = q.view(*q_shape[:-2], n_head, q_shape[-2]//n_head, q_shape[-1])
+            k = k.view(*k_shape[:-2], n_head, k_shape[-2]//n_head, k_shape[-1])
+            if mask is not None:
+                mask_shape = mask.size()
+                mask = mask.unsqueeze(-3)
+        qk = torch.matmul(q.transpose(-1, -2), k)/torch.sqrt(torch.as_tensor(q.size(-2), dtype=q.dtype)) # bxhxmxn
+        if mask is not None:
+            return F.softmax(mask+qk, dim=-1) # bxmxn
+        else:
+            return F.softmax(qk, dim=-1) # bxmxn
+
 
 if __name__ == "__main__":
     import numpy as np
@@ -173,3 +190,4 @@ if __name__ == "__main__":
     mask[...,-1] = -np.inf
     ret = sa(q,k,v, mask)
     print(ret.size())
+    print(sa.softmax(q, k).size())
