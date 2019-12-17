@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 import utils
 
-__all__ = ['Func', 'DenseResBlocks1d', 'InfusedResBlock1d', 'StackedInfusedResBlock1d', 'LinearResBlock', 'SelfAttention']
+__all__ = ['Func', 'DenseResBlocks1d', 'InfusedResBlock1d', 'StackedInfusedResBlock1d', 'LinearResBlock', 'MemoryNet']
 
 class Func(nn.Module):
     def __init__(self, func, **kwargs):
@@ -53,18 +53,18 @@ class DenseResBlocks1d(nn.Module):
             ))
 
     # TODO: scale and bias is ignored??
-    def forward(self, x, cond_scale=None, cond_bias=None):
+    def forward(self, x, scale=None, bias=None):
         rs = x
-        if cond_scale is not None:
-            cond_scales = cond_scale.chunk(self.n_layers, dim=1)
-        if cond_bias is not None:
-            cond_biases = cond_bias.chunk(self.n_layers, dim=1)
+        if scale is not None:
+            scales = scale.chunk(self.n_layers, dim=1)
+        if bias is not None:
+            biases = bias.chunk(self.n_layers, dim=1)
         for i in range(self.n_layers):
             rs = self.convs[i](rs)
-            if cond_scale is not None:
-                rs = rs * cond_scales[i]
-            if cond_bias is not None:
-                rs = rs + cond_biases[i]
+            if scale is not None:
+                rs = rs * scales[i]
+            if bias is not None:
+                rs = rs + biases[i]
             rs = self.skips[i](rs)
 
             if i < self.n_layers-1:
@@ -128,7 +128,7 @@ class MemoryNet(nn.Module):
         super().__init__()
         self.n_head = n_head
         if gamma is not None:
-            self.gamma = torch.Parameter(torch.as_tensor(gamma))
+            self.gamma = nn.Parameter(torch.as_tensor(float(gamma)))
 
     def forward(self, q, k, v, mask=None):
         # q: bxdxm
@@ -139,21 +139,24 @@ class MemoryNet(nn.Module):
         n_head = self.n_head
         if n_head > 1:
             q, k, v = q.contiguous(), k.contiguous(), v.contiguous()
-            b_size, d_size, m_size = q.size()
-            c_size = v.size(1)
-            q = q.view(b_size*n_head, d_size//n_head, m_size)
-            k = k.view(b_size*n_head, d_size//n_head, -1)
-            v = v.view(b_size*n_head, c_size//n_head, -1)
+            q_shape = q.size()
+            k_shape = k.size()
+            v_shape = v.size()
+            q = q.view(*q_shape[:-2], n_head, q_shape[-2]//n_head, q_shape[-1])
+            k = k.view(*k_shape[:-2], n_head, k_shape[-2]//n_head, k_shape[-1])
+            v = v.view(*v_shape[:-2], n_head, v_shape[-2]//n_head, v_shape[-1])
+            if mask is not None:
+                mask_shape = mask.size()
+                mask = mask.unsqueeze(-3)
 
-        d_size = q.size(1)
-        qk = torch.matmul(q.transpose(-1, -2), k)/torch.sqrt(torch.as_tensor(d_size, dtype=q.dtype)) # bxmxn
+        qk = torch.matmul(q.transpose(-1, -2), k)/torch.sqrt(torch.as_tensor(q.size(-2), dtype=q.dtype)) # bxhxmxn
         if mask is not None:
             sm = F.softmax(mask+qk, dim=-1) # bxmxn
         else:
             sm = F.softmax(qk, dim=-1) # bxmxn
-        ret = (sm[:, None, :, :] * v[:, :, None, :]).sum(dim=-1) # bxcxmxn -> bxcxm
+        ret = (sm.unsqueeze(-3) * v.unsqueeze(-2)).sum(dim=-1) # bxcxmxn -> bxcxm
         if n_head > 1:
-            ret = ret.view(b_size, c_size, m_size)
+            ret = ret.view(-1, v_shape[-2], q_shape[-1])
         if hasattr(self, 'gamma'):
             return self.gamma * ret
         else:
@@ -163,12 +166,10 @@ class MemoryNet(nn.Module):
 if __name__ == "__main__":
     import numpy as np
     sa = MemoryNet(n_head=2)
-    q = torch.randn(1,10,3)
-    k = torch.randn(1,10,4)
-    v = torch.randn(1,20,4)
-    mask = torch.zeros(1, 3, 4)
-    mask[:,:,-1] = -np.inf
+    q = torch.randn(7,1,10,3)
+    k = torch.randn(1,11,10,4)
+    v = torch.randn(1,11,20,4)
+    mask = torch.zeros(7, 11, 3, 4)
+    mask[...,-1] = -np.inf
     ret = sa(q,k,v, mask)
     print(ret.size())
-    print(v)
-    print(ret)
