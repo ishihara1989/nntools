@@ -30,6 +30,7 @@ def calc_cross_utterance_speaker_code(log_confidence, speaker_code_sample):
     # log_confidence: SxUx1xT
     # speaker_code_sample: SxUxFxT
     # speaker_code: SxUxF
+    log_confidence = log_confidence - log_confidence.max()
     confidence = log_confidence.exp()
     s_dim, u_dim, f_dim, t_dim = speaker_code_sample.size()
     mask = torch.ones([u_dim, u_dim], device=speaker_code_sample.device) - torch.eye(u_dim, device=speaker_code_sample.device)

@@ -230,6 +230,24 @@ def test_ac():
     print(f'net: {(x-x2).pow(2).sum()}, {ld/b_size}')
 
 
+class ARUnit(nn.Module):
+    def __init__(self):
+        super(ARUnit, self).__init__()
+
+    def forward(self, x):
+        return
+    
+    def ar(self, x):
+        return
+
+    def reset(self):
+        pass
+
+class Macow(nn.Module):
+    def __init__(self, output_dim, dim, inner_dim, kernel=2, layers=2, reversed=False):
+        super(Macow, self).__init__()
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv)>1:

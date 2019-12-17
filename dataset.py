@@ -51,14 +51,14 @@ class AudioDataset(torch.utils.data.Dataset):
 
 
 class MultiSpeakerAudioDataset(torch.utils.data.Dataset):
-    def __init__(self, paths, u_size=16, segment_length=16384+1024-256):
+    def __init__(self, paths, u_size=16, t_size=64, n_fft=1024, hop_length=256):
         sps = []
         for p in paths:
             sps.extend(Path(p).glob('*'))
         self.pathss = [list(Path(p).glob('**/*.wav')) for p in sps]
         self.pathss = [ps for ps in self.pathss if len(ps)>=u_size]
         self.u_size = u_size
-        self.segment_length = segment_length
+        self.segment_length = t_size*hop_length+n_fft-hop_length
 
     def __len__(self):
         return len(self.pathss)

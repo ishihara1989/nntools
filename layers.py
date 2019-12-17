@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 import utils
 
-__all__ = ['Func', 'DenseResBlocks1d', 'InfusedResBlock1d', 'StackedInfusedResBlock1d', 'LinearResBlock']
+__all__ = ['Func', 'DenseResBlocks1d', 'InfusedResBlock1d', 'StackedInfusedResBlock1d', 'LinearResBlock', 'SelfAttention']
 
 class Func(nn.Module):
     def __init__(self, func, **kwargs):
@@ -121,3 +121,40 @@ class LinearResBlock(nn.Module):
     def forward(self, x):
         r = self.update(x)
         return x + r
+
+
+class SelfAttention(nn.Module):
+    def __init__(self, gamma=None):
+        super().__init__()
+        if gamma is not None:
+            self.gamma = torch.Parameter(torch.as_tensor(gamma))
+
+    def forward(self, q, k, v, mask=None):
+        # q: bxdxm
+        # k: bxdxn
+        # v: bxcxn
+        # mask: bxmxn
+        d_size = q.size(1)
+        qk = torch.matmul(q.transpose(-1, -2), k)/torch.sqrt(torch.as_tensor(d_size, dtype=q.dtype)) # bxmxn
+        if mask is not None:
+            sm = F.softmax(mask+qk, dim=-1) # bxmxn
+            print(sm)
+        else:
+            sm = F.softmax(qk, dim=-1) # bxmxn
+        ret = (sm[:, None, :, :] * v[:, :, None, :]).sum(dim=-1) # bxcxmxn -> bxcxm
+        if hasattr(self, 'gamma'):
+            return self.gamma * ret
+        else:
+            return ret
+
+
+if __name__ == "__main__":
+    import numpy as np
+    sa = SelfAttention()
+    q = torch.randn(1,10,3)
+    k = torch.randn(1,10,4)
+    v = torch.randn(1,15,4)
+    mask = torch.zeros(1, 3, 4)
+    mask[:,:,-1] = -np.inf
+    ret = sa(q,k,v, mask)
+    print(ret.size())
