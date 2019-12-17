@@ -123,9 +123,10 @@ class LinearResBlock(nn.Module):
         return x + r
 
 
-class SelfAttention(nn.Module):
-    def __init__(self, gamma=None):
+class MemoryNet(nn.Module):
+    def __init__(self, n_head=1, gamma=None):
         super().__init__()
+        self.n_head = n_head
         if gamma is not None:
             self.gamma = torch.Parameter(torch.as_tensor(gamma))
 
@@ -133,15 +134,26 @@ class SelfAttention(nn.Module):
         # q: bxdxm
         # k: bxdxn
         # v: bxcxn
-        # mask: bxmxn
+        # mask: bxmxn | 1xmxn
+        # ret: bxcxm
+        n_head = self.n_head
+        if n_head > 1:
+            q, k, v = q.contiguous(), k.contiguous(), v.contiguous()
+            b_size, d_size, m_size = q.size()
+            c_size = v.size(1)
+            q = q.view(b_size*n_head, d_size//n_head, m_size)
+            k = k.view(b_size*n_head, d_size//n_head, -1)
+            v = v.view(b_size*n_head, c_size//n_head, -1)
+
         d_size = q.size(1)
         qk = torch.matmul(q.transpose(-1, -2), k)/torch.sqrt(torch.as_tensor(d_size, dtype=q.dtype)) # bxmxn
         if mask is not None:
             sm = F.softmax(mask+qk, dim=-1) # bxmxn
-            print(sm)
         else:
             sm = F.softmax(qk, dim=-1) # bxmxn
         ret = (sm[:, None, :, :] * v[:, :, None, :]).sum(dim=-1) # bxcxmxn -> bxcxm
+        if n_head > 1:
+            ret = ret.view(b_size, c_size, m_size)
         if hasattr(self, 'gamma'):
             return self.gamma * ret
         else:
@@ -150,11 +162,13 @@ class SelfAttention(nn.Module):
 
 if __name__ == "__main__":
     import numpy as np
-    sa = SelfAttention()
+    sa = MemoryNet(n_head=2)
     q = torch.randn(1,10,3)
     k = torch.randn(1,10,4)
-    v = torch.randn(1,15,4)
+    v = torch.randn(1,20,4)
     mask = torch.zeros(1, 3, 4)
     mask[:,:,-1] = -np.inf
     ret = sa(q,k,v, mask)
     print(ret.size())
+    print(v)
+    print(ret)
