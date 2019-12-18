@@ -100,13 +100,21 @@ class _SoftDTWCuda(Function):
         return grad_output[:, None, None] * E, None
 
 class SoftDTW(torch.nn.Module):
-    def __init__(self, gamma=1.0, normalize=False, cuda=True):
+    def __init__(self, gamma=1.0, normalize=False, cuda=True, save_memory=True):
         super(SoftDTW, self).__init__()
         self.normalize = normalize
         self.gamma=gamma
+        self.save_memory=save_memory
 
     def calc_distance_matrix(self, x, y):
-        return torch.pow(x[:, :, :, None]- y[:, :, None, :], 2).sum(dim=1)
+        if self.save_memory:
+            xx = x.pow(2).sum(dim=1) # S, T
+            yy = y.pow(2).sum(dim=1) # S, T'
+            xy = x.transpose(1,2).matmul(y) # S, T, T'
+            pdist = xx[:,:,None]+yy[:,None,:]-2*xy
+            return pdist
+        else:
+            return torch.pow(x[:, :, :, None]- y[:, :, None, :], 2).sum(dim=1)
 
     def forward(self, x, y):
         func_dtw = _SoftDTWCuda.apply if DTW_CUDA_SUCCEED and x.is_cuda else _SoftDTW.apply
@@ -148,3 +156,8 @@ if __name__ == "__main__":
     print(loss)
     print(x.grad)
     print(y.grad)
+
+    xy=loss_fun.calc_distance_matrix(x, y)
+    loss_fun.save_memory=False
+    xy2=loss_fun.calc_distance_matrix(x, y)
+    print((xy-xy2).pow(2).sum())
