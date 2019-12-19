@@ -130,7 +130,7 @@ class MemoryNet(nn.Module):
         if gamma is not None:
             self.gamma = nn.Parameter(torch.as_tensor(float(gamma)))
 
-    def forward(self, q, k, v, mask=None):
+    def forward(self, q, k, v, mask=None, alpha=1.0):
         # q: bxdxm
         # k: bxdxn
         # v: bxcxn
@@ -149,7 +149,7 @@ class MemoryNet(nn.Module):
                 mask_shape = mask.size()
                 mask = mask.unsqueeze(-3)
 
-        qk = torch.matmul(q.transpose(-1, -2), k)/torch.sqrt(torch.as_tensor(q.size(-2), dtype=q.dtype)) # bxhxmxn
+        qk = alpha * torch.matmul(q.transpose(-1, -2), k) # bxhxmxn
         if mask is not None:
             sm = F.softmax(mask+qk, dim=-1) # bxmxn
         else:
@@ -162,7 +162,7 @@ class MemoryNet(nn.Module):
         else:
             return ret
 
-    def softmax(self, q, k, mask=None):
+    def softmax(self, q, k, alpha=1.0, mask=None):
         n_head = self.n_head
         q_shape = q.size()
         k_shape = k.size()
@@ -173,7 +173,7 @@ class MemoryNet(nn.Module):
             if mask is not None:
                 mask_shape = mask.size()
                 mask = mask.unsqueeze(-3)
-        qk = torch.matmul(q.transpose(-1, -2), k)/torch.sqrt(torch.as_tensor(q.size(-2), dtype=q.dtype)) # bxhxmxn
+        qk = alpha * torch.matmul(q.transpose(-1, -2), k) # bxhxmxn
         if mask is not None:
             return F.softmax(mask+qk, dim=-1) # bxmxn
         else:
