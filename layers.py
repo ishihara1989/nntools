@@ -148,6 +148,8 @@ class MemoryNet(nn.Module):
             if mask is not None:
                 mask_shape = mask.size()
                 mask = mask.unsqueeze(-3)
+        q = F.normalize(q, dim=-2)
+        k = F.normalize(k, dim=-2)
 
         qk = alpha * torch.matmul(q.transpose(-1, -2), k) # bxhxmxn
         if mask is not None:
@@ -173,6 +175,8 @@ class MemoryNet(nn.Module):
             if mask is not None:
                 mask_shape = mask.size()
                 mask = mask.unsqueeze(-3)
+        q = F.normalize(q, dim=-2)
+        k = F.normalize(k, dim=-2)
         qk = alpha * torch.matmul(q.transpose(-1, -2), k) # bxhxmxn
         if mask is not None:
             return F.softmax(mask+qk, dim=-1) # bxmxn
