@@ -19,4 +19,4 @@ def extract_vctk_para(root):
 
 
 if __name__ == "__main__":
-    extract_vctk_para('../data/VCTK/VCTK-Corpus/txt/')
+    extract_vctk_para('../../data/VCTK/VCTK-Corpus/txt/')
