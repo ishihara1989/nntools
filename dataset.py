@@ -33,6 +33,23 @@ def longest_pair_collate(batch):
 
     return torch.as_tensor(bx), torch.as_tensor(by), lens
 
+def longest_quad_collate(batch):
+    batch = [tp for tp in batch if tp is not None]
+    if len(batch) == 0: return None
+    maxs = [0, 0, 0, 0]
+    for tp in batch:
+        for i in range(4):
+            maxs[i] = max(maxs[i], tp[i].shape[-1])
+    shapes = [[len(batch), *batch[0][i].shape] for i in range(4)]
+    for i in range(4):
+        shapes[i][-1] = maxs[i]
+    ret = [np.zeros(s, dtype=np.float32) for s in shapes]
+    for b, tp in enumerate(batch):
+        for i in range(4):
+            ret[i][b, ..., :tp[i].shape[-1]] = tp[i][...]
+    return [torch.as_tensor(r) for r in ret]
+    
+
 class AudioDataset(torch.utils.data.Dataset):
     def __init__(self, roots, segment_length=16384):
         self.paths = []
@@ -119,15 +136,16 @@ class JvsParallelMgcc(torch.utils.data.Dataset):
     def n_speakers(self):
         return 1 - self.sp_min + self.sp_max
 
+    def map_path(self, index, ut_path):
+        i = index + self.sp_min
+        sp = 'jvs{:03}'.format(i)
+        return self.root / sp / 'parallel100/wav24kHz16bit' / ut_path
+
     def __getitem__(self, index):
         i = index + self.ut_min
-        x_i, y_i = np.random.permutation(self.n_speakers)[:2]
-        sp_x = 'jvs{:03}'.format(x_i + self.sp_min)
-        sp_y = 'jvs{:03}'.format(y_i + self.sp_min)
-
         ut_path = 'VOICEACTRESS100_{:03}.mgcc.npy'.format(i)
-        path_x = self.root / sp_x / 'parallel100/wav24kHz16bit' / ut_path
-        path_y = self.root / sp_y / 'parallel100/wav24kHz16bit' / ut_path
+
+        path_x, path_y = [self.map_path(idx, ut_path) for idx in np.random.permutation(self.n_speakers) if self.map_path(idx, ut_path).exists()][:2]
         x = np.load(path_x)
         y = np.load(path_y)
         return x, y
@@ -151,14 +169,17 @@ class JvsNonparallelMgcc(torch.utils.data.Dataset):
         return 1 - self.sp_min + self.sp_max
 
     def __getitem__(self, index):
-        ids = np.random.permutation(self.n_utterances)[:self.u_size]
+        sp = 'jvs{:03}'.format(index + self.sp_min)
+        paths = [self.map_path(i, sp) for i in np.random.permutation(self.n_utterances) if self.map_path(i, sp).exists()][:self.u_size]
         
-        mgccs = [self.load_mgcc(index, i) for i in ids]
+        mgccs = [self.load_mgcc(p) for p in paths]
         return np.asarray(mgccs)
 
-    def load_mgcc(self, sp_i, ut_i):
-        sp = 'jvs{:03}'.format(sp_i + self.sp_min)
-        path = self.root / sp / 'parallel100/wav24kHz16bit' / 'VOICEACTRESS100_{:03}.mgcc.npy'.format(ut_i + self.ut_min)
+    def map_path(self, index, sp):
+        i = index + self.ut_min
+        return self.root / sp / 'parallel100/wav24kHz16bit' / 'VOICEACTRESS100_{:03}.mgcc.npy'.format(i)
+
+    def load_mgcc(self, path):
         mgcc = np.load(path)
         if mgcc.shape[-1] >= self.t_size:
             max_start = mgcc.shape[-1] - self.t_size
@@ -170,54 +191,133 @@ class JvsNonparallelMgcc(torch.utils.data.Dataset):
         return mgcc
 
 
+class JvsTwoParallelMgcc(torch.utils.data.Dataset):
+    def __init__(self, root, sp_min=1, sp_max=90, ut_min=1, ut_max=90, verbose=False):
+        self.root = Path(root)
+        self.sp_min = sp_min
+        self.sp_max = sp_max
+        self.ut_min = ut_min
+        self.ut_max = ut_max
+        self.verbose = verbose
+
+    @property
+    def n_speakers(self):
+        return 1 - self.sp_min + self.sp_max
+
+    @property
+    def n_utterances(self):
+        return 1 - self.ut_min + self.ut_max
+
+    def __len__(self):
+        return self.n_speakers * (self.n_speakers-1) * self.n_utterances * (self.n_utterances-1) // 4
+
+    def indeces(self, index):
+        J = self.n_utterances * (self.n_utterances-1) // 2
+        sk = index // J
+        uk = index % J
+        si, sj = self.unfold_index(sk, self.n_speakers)
+        ui, uj = self.unfold_index(uk, self.n_utterances)
+        return si, sj, ui, uj
+
+    def unfold_index(self, k, N):
+        # index to combination
+        i = k // N
+        j = k % N
+        if i >= j:
+            return i+1, j
+        else:
+            return N-i-1, N-j-1
+
+    def map_path(self, sp, ut):
+        i = sp + self.sp_min
+        j = ut + self.ut_min
+        return self.root / f'jvs{i:03}' / 'parallel100/wav24kHz16bit' / f'VOICEACTRESS100_{j:03}.mgcc.npy'
+
+    def __getitem__(self, index):
+        si, sj, ui, uj = self.indeces(index)
+        if self.verbose:
+            print(self.sp_min+si, self.sp_min+sj, self.ut_min+ui, self.ut_min+uj)
+        x1 = self.map_path(si, ui)
+        x2 = self.map_path(si, uj)
+        y1 = self.map_path(sj, ui)
+        y2 = self.map_path(sj, uj)
+        paths = [x1, x2, y1, y2]
+        if not all([p.exists() for p in paths]):
+            return None
+
+        return [np.load(p) for p in paths]
+
+
 if __name__ == "__main__":
     # test
     from torch.utils.data import DataLoader
-    dataset = AudioDataset(['../data/voiceactors/voice_actors_split_wav_16k'])
-    train_loader = DataLoader(dataset, num_workers=8, shuffle=False,
-                              batch_size=10,
-                              pin_memory=False,
-                              drop_last=True)
-    for i, batch in enumerate(train_loader):
-        audio = batch
-        print(f'{i}: {audio.shape}')
-        if i>10:
-            break
+    import sys
+    if len(sys.argv)>1:
+        kind = sys.argv[1]
+    else:
+        kind = 'all'
 
-    groups = torch.load('preprocess/text_group_list.pt')
-    dataset = ParallelDataset('../data/vctk-preprocess/wavs/wav_16k/', groups)
+    is_all = kind == 'all'
 
-    train_loader = DataLoader(dataset, num_workers=8, shuffle=False,
-                              batch_size=4,
-                              pin_memory=False,
-                              drop_last=True, collate_fn=longest_pair_collate)
+    if kind == 'audio' or is_all:
+        dataset = AudioDataset(['../data/voiceactors/voice_actors_split_wav_16k'])
+        train_loader = DataLoader(dataset, num_workers=8, shuffle=False,
+                                batch_size=10,
+                                pin_memory=False,
+                                drop_last=True)
+        for i, batch in enumerate(train_loader):
+            audio = batch
+            print(f'{i}: {audio.shape}')
+            if i>10:
+                break
 
-    for i, batch in enumerate(train_loader):
-        x, y, lens = batch
-        print(f'{i}: {x.shape}, {y.shape}')
-        if i>10:
-            break
+    if kind == 'parallel' or is_all:
+        groups = torch.load('preprocess/text_group_list.pt')
+        dataset = ParallelDataset('../data/vctk-preprocess/wavs/wav_16k/', groups)
 
-    dataset = JvsParallelMgcc('../data/jvs/jvs_mgcc_16k_40/')
+        train_loader = DataLoader(dataset, num_workers=8, shuffle=False,
+                                batch_size=4,
+                                pin_memory=False,
+                                drop_last=True, collate_fn=longest_pair_collate)
 
-    train_loader = DataLoader(dataset, num_workers=8, shuffle=False,
-                              batch_size=4,
-                              pin_memory=False,
-                              drop_last=True, collate_fn=longest_pair_collate)
+        for i, batch in enumerate(train_loader):
+            x, y, lens = batch
+            print(f'{i}: {x.shape}, {y.shape}')
+            if i>10:
+                break
 
-    for i, batch in enumerate(train_loader):
-        x, y, lens = batch
-        print(f'{i}: {x.shape}, {y.shape}')
-        if i>10:
-            break
+    if kind == 'jvsparallel' or is_all:
+        dataset = JvsParallelMgcc('../data/jvs/jvs_mgcc_16k_40/')
 
-    dataset = JvsNonparallelMgcc('../data/jvs/jvs_mgcc_16k_40/', 8, 2048)
-    train_loader = DataLoader(dataset, num_workers=8, shuffle=False,
-                              batch_size=8,
-                              pin_memory=False,
-                              drop_last=True)
+        train_loader = DataLoader(dataset, num_workers=8, shuffle=False,
+                                batch_size=4,
+                                pin_memory=False,
+                                drop_last=True, collate_fn=longest_pair_collate)
 
-    for i, batch in enumerate(train_loader):
-        print(f'{i}: {batch.shape}')
-        if i>10:
-            break
+        for i, batch in enumerate(train_loader):
+            x, y, lens = batch
+            print(f'{i}: {x.shape}, {y.shape}')
+            if i>10:
+                break
+
+    if kind == 'jvsnonpara' or is_all:
+        dataset = JvsNonparallelMgcc('../data/jvs/jvs_mgcc_16k_40/', 8, 2048)
+        train_loader = DataLoader(dataset, num_workers=8, shuffle=False,
+                                batch_size=8,
+                                pin_memory=False,
+                                drop_last=True)
+
+        for i, batch in enumerate(train_loader):
+            print(f'{i}: {batch.shape}')
+            if i>10:
+                break
+
+    if kind == 'jvstwo' or is_all:
+        dataset = JvsTwoParallelMgcc('../data/jvs/jvs_mgcc_16k_40/', sp_min=1, sp_max=4, ut_min=1, ut_max=5, verbose=True)
+        train_loader = DataLoader(dataset, num_workers=1, shuffle=False,
+                                batch_size=1,
+                                pin_memory=False,
+                                drop_last=False, collate_fn=longest_quad_collate)
+        for i, batch in enumerate(train_loader):
+            if i>100:
+                break
