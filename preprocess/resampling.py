@@ -2,7 +2,7 @@ import sys
 import pathlib
 
 import librosa
-import numpy
+import numpy as np
 import scipy.io.wavfile as wavfile
 
 def resample_dir(srcroot, tgtroot, sr=16000):
