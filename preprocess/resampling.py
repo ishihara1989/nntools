@@ -29,11 +29,11 @@ if __name__ == "__main__":
         print(f'usage: {sys.argv[0]} srcdir tgtdir')
         exit(1)
 
-    if len(sys.argv) >= 3:
+    if len(sys.argv) >= 4:
         try:
-            sr = float(sys.argv[2])
+            sr = float(sys.argv[3])
         except:
-            print(f'failed to parse as int: {sys.argv[2]}')
+            print(f'failed to parse as int: {sys.argv[3]}')
             exit(1)
     else:
         sr = 16000

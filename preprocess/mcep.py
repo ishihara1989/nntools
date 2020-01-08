@@ -43,11 +43,11 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         print(f'usage: {sys.argv[0]} srcdir tgtdir [alpha]')
         exit(1)
-    if len(sys.argv) >= 3:
+    if len(sys.argv) >= 4:
         try:
-            alpha = float(sys.argv[2])
+            alpha = float(sys.argv[3])
         except:
-            print(f'failed to parse as float: {sys.argv[2]}')
+            print(f'failed to parse as float: {sys.argv[3]}')
             exit(1)
     else:
         alpha = 0.42
