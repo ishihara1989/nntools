@@ -28,4 +28,13 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(f'usage: {sys.argv[0]} srcdir tgtdir')
         exit(1)
-    resample_dir(sys.argv[1], sys.argv[2])
+
+    if len(sys.argv) >= 3:
+        try:
+            sr = float(sys.argv[2])
+        except:
+            print(f'failed to parse as int: {sys.argv[2]}')
+            exit(1)
+    else:
+        sr = 16000
+    resample_dir(sys.argv[1], sys.argv[2], sr=sr)
