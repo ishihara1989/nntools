@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     if len(sys.argv) >= 4:
         try:
-            sr = float(sys.argv[3])
+            sr = int(sys.argv[3])
         except:
             print(f'failed to parse as int: {sys.argv[3]}')
             exit(1)
