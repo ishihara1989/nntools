@@ -48,7 +48,76 @@ def longest_quad_collate(batch):
         for i in range(4):
             ret[i][b, ..., :tp[i].shape[-1]] = tp[i][...]
     return [torch.as_tensor(r) for r in ret]
-    
+
+
+def load_mgcc(path, t_size):
+        mgcc = np.load(path)
+        if mgcc.shape[-1] >= t_size:
+            max_start = mgcc.shape[-1] - t_size
+            start = random.randint(0, max_start)
+            mgcc = mgcc[:, start:start+t_size]
+        else:
+            offset = random.randint(0, t_size - mgcc.shape[-1])
+            mgcc = np.pad(mgcc, [(0, 0), (offset, t_size - mgcc.shape[-1]-offset)], 'constant')
+        return mgcc
+
+
+class RandomPicker():
+    def __init__(self, data, n=1):
+        self.data = data
+        self.index = 0
+        self.shuffle()
+        self.n = n
+
+    def __len__(self):
+        return len(self.data)
+
+    def shuffle(self):
+        self.permutation = np.random.permutation(len(self))
+
+    def pick(self):
+        if self.index > len(self)-self.n:
+            self.shuffle()
+            self.index = 0
+        idx = self.permutation[self.index:self.index+self.n]
+        self.index += 1
+        if self.n == 1:
+            return self.data[idx[0]]
+        else:
+            return [self.data[i] for i in idx]
+
+
+class RandomPair():
+    def __init__(self, data, n=1):
+        self.data = data
+        self.index = 0
+        self.shuffle()
+        self.n = n
+
+    def __len__(self):
+        n = len(self.data)
+        return n * (n-1) // 2
+
+    def unfold_index(self, k, N):
+        i = k // N
+        j = k % N
+        if i >= j:
+            return i+1, j
+        else:
+            return N-i-1, N-j-1
+
+    def shuffle(self):
+        self.permutation = np.random.permutation(len(self))
+
+    def pick(self):
+        if self.index >= len(self):
+            self.shuffle()
+            self.index = 0
+        idx = self.permutation[self.index]
+        self.index += 1
+        i, j = self.unfold_index(idx, len(self.data))
+        return self.data[i], self.data[j]
+
 
 class AudioDataset(torch.utils.data.Dataset):
     def __init__(self, roots, segment_length=16384):
@@ -248,6 +317,49 @@ class JvsTwoParallelMgcc(torch.utils.data.Dataset):
         return [np.load(p) for p in paths]
 
 
+class VCTKParallel(torch.utils.data.Dataset):
+    def __init__(self, root, sp_min=225, sp_max=343, ut_min=9, ut_max=24, verbose=False):
+        self.root = Path(root)
+        self.sp_min = sp_min
+        self.sp_max = sp_max
+        self.ut_min = ut_min
+        self.ut_max = ut_max
+        self.verbose = verbose
+        self.parallels = []
+        for i in range(ut_min, ut_max+1):
+            self.parallels.append(sorted([p for p in self.root.glob(f'*/*_{i:03}.mcep.npy') if p.name >= f'p{sp_min:03}_{i:03}.mcep.npy' and p.name <= f'p{sp_max:03}_{i:03}.mcep.npy']))
+        self.parallel_pickers = [RandomPair(p) for p in self.parallels]
+        self.nonparallels = {p.name: RandomPicker([pp for pp in p.glob('*.mcep.npy') if pp.name > f'{p.name}_{ut_max:03}.mcep.npy']) for p in self.root.glob(f'*')}
+
+    def __len__(self):
+        return len(self.parallels)
+
+    def __getitem__(self, index):
+        px, py = self.parallel_pickers[index].pick()
+        npx = self.nonparallels[px.parent.name].pick()
+        npy = self.nonparallels[py.parent.name].pick()
+        return np.load(px), np.load(npx), np.load(py), np.load(npy)
+
+
+class VCTKNonParallel(torch.utils.data.Dataset):
+    def __init__(self, root, sp_min=225, sp_max=343, ut_min=9, u_size=8, t_size=512, verbose=False):
+        self.root = Path(root)
+        self.sp_min = sp_min
+        self.sp_max = sp_max
+        self.ut_min = ut_min
+        self.u_size = u_size
+        self.t_size = t_size
+        self.verbose = verbose
+        self.nonparallels = [RandomPicker([pp for pp in p.glob('*.mcep.npy') if pp.name >= f'{p.name}_{ut_min:03}.mcep.npy'], n=u_size) for p in self.root.glob(f'*')]
+
+    def __len__(self):
+        return len(self.nonparallels)
+
+    def __getitem__(self, index):
+        paths = self.nonparallels[index].pick()
+        return np.asarray([load_mgcc(p, self.t_size) for p in paths])
+
+
 if __name__ == "__main__":
     # test
     from torch.utils.data import DataLoader
@@ -320,4 +432,28 @@ if __name__ == "__main__":
                                 drop_last=False, collate_fn=longest_quad_collate)
         for i, batch in enumerate(train_loader):
             if i>100:
+                break
+
+    if kind == 'vctkpara' or is_all:
+        dataset = VCTKParallel('../data/vctk-preprocess/mcep/')
+        train_loader = DataLoader(dataset, num_workers=1, shuffle=False,
+                                batch_size=4,
+                                pin_memory=False,
+                                drop_last=False, collate_fn=longest_quad_collate)
+        for i, batch in enumerate(train_loader):
+            px, npx, py, npy = batch
+            print(px.size(), py.size(), npx.size(), npy.size())
+            if i>10:
+                break
+
+    if kind == 'vctknonpara' or is_all:
+        dataset = VCTKNonParallel('../data/vctk-preprocess/mcep/')
+        train_loader = DataLoader(dataset, num_workers=8, shuffle=False,
+                                batch_size=8,
+                                pin_memory=False,
+                                drop_last=False)
+
+        for i, batch in enumerate(train_loader):
+            print(batch.size())
+            if i>10:
                 break

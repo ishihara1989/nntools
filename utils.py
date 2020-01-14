@@ -46,10 +46,11 @@ def large_margin_cosine_loss(feature, margin=0.05, s=4):
     m = margin*label
     return F.cross_entropy(torch.exp(s*(cossim - m[:, :, None, None])), torch.arange(s_dim, device=feature.device)[:,None, None].expand(s_dim, u_dim, u_dim))
 
-def kl_normal(x):
+def kl_normal(x, eps=1e-4):
+    assert len(x.size()) == 3
     mean = x.mean(dim=2, keepdim=True)
     diff = x-mean
-    sigma = diff.matmul(diff.transpose(1,2))/x.size(2)
+    sigma = diff.matmul(diff.transpose(1,2))/x.size(2) + eps*torch.eye(x.size(1), dtype=x.dtype, device=x.device)[None, :, :]
     kl = -sigma.logdet().sum() + sigma.diagonal(dim1=1, dim2=2).sum() + mean.pow(2).sum()
     return 0.5*(kl - x.size(1))
 
