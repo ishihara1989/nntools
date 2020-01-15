@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 import utils
 
-__all__ = ['Func', 'DenseResBlocks1d', 'InfusedResBlock1d', 'StackedInfusedResBlock1d', 'LinearResBlock', 'MemoryNet']
+__all__ = ['Func', 'DenseResBlocks1d', 'InfusedResBlock1d', 'StackedInfusedResBlock1d', 'LinearResBlock', 'MemoryNet', 'VTLN']
 
 class Func(nn.Module):
     def __init__(self, func, **kwargs):
