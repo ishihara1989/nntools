@@ -1,3 +1,4 @@
+from scipy.special import comb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,13 +21,13 @@ class Func(nn.Module):
 
 class ResBlock1d(nn.Module):
     def __init__(self, channels):
-        super().__init__()
+        super().__init__(channels)
         self.update = nn.Sequential(
             nn.ReflectionPad2d(1),
-            wn_xavier(nn.Conv2d(channels, 2*channels, 3, bias=False)),
+            utils.wn_xavier(nn.Conv2d(channels, 2*channels, 3, bias=False)),
             Func(F.glu, dim=1),
             nn.ReflectionPad2d(1),
-            wn_xavier(nn.Conv2d(channels, 2*channels, 3, bias=False)),
+            utils.wn_xavier(nn.Conv2d(channels, 2*channels, 3, bias=False)),
             Func(F.glu, dim=1)
         )
 
@@ -184,14 +185,55 @@ class MemoryNet(nn.Module):
             return F.softmax(qk, dim=-1) # bxmxn
 
 
+class VTLN(nn.Module):
+    def __init__(self, n_mcep):
+        super().__init__()
+        a = np.zeros((n_mcep, n_mcep, 2*n_mcep+1), dtype=np.float32)
+        for k in range(1, n_mcep+1):
+            for l in range(1, n_mcep+1):
+                for n in range(n_mcep+1):
+                    if l-k<=n<=l:
+                        a[k-1,l-1,2*n+k-l] = comb(l,n) * comb(k+n-1, l-1) * (-1)**(n+k+l)
+        self.register_buffer('a_3d', torch.Tensor(a))
+        self.n_mcep = n_mcep
+
+    def forward(self, mcep, alpha):
+        # mcep: bxmxt
+        # alpha: bxt
+        b_size = alpha.size(0)
+        t_size = alpha.size(-1)
+        one = torch.ones(b_size, t_size, dtype=alpha.dtype, device=alpha.device)
+        ones = one[..., None].expand([*one.size(), 2*self.n_mcep]) * alpha[..., None] #bxtxd
+        alpha_v = torch.cumprod(torch.cat([one[..., None], ones], dim=-1), dim=-1)
+        warp_mat = torch.einsum('btd,xyd->btxy', alpha_v, self.a_3d) # bxtxmxm
+        return torch.einsum('bmt,btnm->bnt', mcep, warp_mat)
+
+
 if __name__ == "__main__":
     import numpy as np
-    sa = MemoryNet(n_head=2)
-    q = torch.randn(7,1,10,3)
-    k = torch.randn(1,11,10,4)
-    v = torch.randn(1,11,20,4)
-    mask = torch.zeros(7, 11, 3, 4)
-    mask[...,-1] = -np.inf
-    ret = sa(q,k,v, mask)
-    print(ret.size())
-    print(sa.softmax(q, k).size())
+    import sys
+    if len(sys.argv)>1:
+        kind = sys.argv[1]
+    else:
+        kind = 'all'
+
+    is_all = kind == 'all'
+    if kind == 'memory' or is_all:
+        sa = MemoryNet(n_head=2)
+        q = torch.randn(7,1,10,3)
+        k = torch.randn(1,11,10,4)
+        v = torch.randn(1,11,20,4)
+        mask = torch.zeros(7, 11, 3, 4)
+        mask[...,-1] = -np.inf
+        ret = sa(q,k,v, mask)
+        print(ret.size())
+        print(sa.softmax(q, k).size())
+    if kind == 'vtln' or is_all:
+        b_size = 4
+        m_size = 40
+        t_size = 64
+        vtln = VTLN(m_size)
+        z = torch.randn(b_size, m_size, t_size)
+        alpha = 0.2 * torch.ones(b_size, t_size)
+        ret = vtln(z, alpha)
+        print(ret.size())

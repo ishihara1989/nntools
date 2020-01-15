@@ -220,7 +220,7 @@ class JvsParallelMgcc(torch.utils.data.Dataset):
         return x, y
 
 
-class JvsNonparallelMgcc(torch.utils.data.Dataset):
+class JvsNonparallelMcep(torch.utils.data.Dataset):
     def __init__(self, root, u_size, t_size, sp_min=1, sp_max=90, ut_min=1, ut_max=90):
         self.root = Path(root)
         self.sp_min = sp_min
@@ -260,7 +260,7 @@ class JvsNonparallelMgcc(torch.utils.data.Dataset):
         return mgcc
 
 
-class JvsTwoParallelMgcc(torch.utils.data.Dataset):
+class JvsTwoParallelMcep(torch.utils.data.Dataset):
     def __init__(self, root, sp_min=1, sp_max=90, ut_min=1, ut_max=90, verbose=False):
         self.root = Path(root)
         self.sp_min = sp_min
@@ -413,7 +413,7 @@ if __name__ == "__main__":
                 break
 
     if kind == 'jvsnonpara' or is_all:
-        dataset = JvsNonparallelMgcc('../data/jvs/jvs_mgcc_16k_40/', 8, 2048)
+        dataset = JvsNonparallelMcep('../data/jvs/jvs_mgcc_16k_40/', 8, 2048)
         train_loader = DataLoader(dataset, num_workers=8, shuffle=False,
                                 batch_size=8,
                                 pin_memory=False,
@@ -425,7 +425,7 @@ if __name__ == "__main__":
                 break
 
     if kind == 'jvstwo' or is_all:
-        dataset = JvsTwoParallelMgcc('../data/jvs/jvs_mgcc_16k_40/', sp_min=1, sp_max=4, ut_min=1, ut_max=5, verbose=True)
+        dataset = JvsTwoParallelMcep('../data/jvs/jvs_mgcc_16k_40/', sp_min=1, sp_max=4, ut_min=1, ut_max=5, verbose=True)
         train_loader = DataLoader(dataset, num_workers=1, shuffle=False,
                                 batch_size=1,
                                 pin_memory=False,
