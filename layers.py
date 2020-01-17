@@ -1,3 +1,4 @@
+import numpy as np
 from scipy.special import comb
 import torch
 import torch.nn as nn
@@ -210,7 +211,6 @@ class VTLN(nn.Module):
 
 
 if __name__ == "__main__":
-    import numpy as np
     import sys
     if len(sys.argv)>1:
         kind = sys.argv[1]

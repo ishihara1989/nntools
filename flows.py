@@ -230,22 +230,89 @@ def test_ac():
     print(f'net: {(x-x2).pow(2).sum()}, {ld/b_size}')
 
 
-class ARUnit(nn.Module):
-    def __init__(self):
-        super(ARUnit, self).__init__()
+class ARFlow(nn.Module):
+    def __init__(self, out_channels, inner_channels=128, zero_init=True):
+        super().__init__()
+        self.input = utils.wn_xavier(nn.Conv1d(out_channels, inner_channels, 3))
+        self.mid = utils.wn_xavier(nn.Conv1d(inner_channels, inner_channels, 3))
+        self.output = nn.Conv1d(inner_channels, 2*out_channels, 3)
+        if zero_init:
+            self.output.weight.data[...] = 0.0
+            self.output.bias.data[...] = 0.0
+        self.alpha = nn.Parameter(torch.ones(out_channels)).unsqueeze(0).unsqueeze(2)
+        self.beta = nn.Parameter(torch.zeros(out_channels)).unsqueeze(0).unsqueeze(2)
 
-    def forward(self, x):
-        return
-    
-    def ar(self, x):
-        return
+        self.inner_channels = inner_channels
+        self.out_channels = out_channels
 
-    def reset(self):
-        pass
+    def forward(self, x, cond=None, logdet=None, invert=False):
+        if not invert:
+            x_in = F.pad(x[:, :, :-1], (3, 0))
+            rs = self.input(x_in)
+            if cond is not None:
+                rs = rs + cond
+            rs = F.pad(rs, (2, 0))
+            rs = self.mid(rs)
+            rs = F.pad(rs, (2, 0))
+            rs = self.output(rs)
+            log_s, t = rs.chunk(2, dim=1)
+            log_s = self.alpha*torch.tanh(log_s) + self.beta
+            s = torch.exp(log_s)
+            z = s*x+t
+            if logdet is not None:
+                dlogdet = log_s.sum()
+                logdet = logdet + dlogdet
+                return z, logdet
+            else:
+                return z
+        else:
+            b_size = x.size(0)
+            t_size = x.size(-1)
+            like = {
+                "device": x.device,
+                "dtype":  x.dtype
+            }
+            x_in = torch.zeros(b_size, self.out_channels, 3, **like)
+            h1 = torch.zeros(b_size, self.inner_channels, 3, **like)
+            h2 = torch.zeros(b_size, self.inner_channels, 3, **like)
+            z = torch.zeros(b_size, self.out_channels, t_size, **like)
+            for i in range(t_size):
+                h1[:, :, :-1] = h1[:, :, 1:]
+                if cond is None:
+                    h1[:, :, -1:] = self.input(x_in)
+                else:
+                    h1[:, :, -1:] = self.input(x_in) + cond[:, :, i:i+1]
+                h2[:, :, :-1] = h2[:, :, 1:]
+                h2[:, :, -1:] = self.mid(h1)
+                log_s, t = self.output(h2).chunk(2, dim=1)
+                log_s = self.alpha*torch.tanh(log_s) + self.beta
 
-class Macow(nn.Module):
-    def __init__(self, output_dim, dim, inner_dim, kernel=2, layers=2, reversed=False):
-        super(Macow, self).__init__()
+                si = torch.exp(-log_s)
+                z[:, :, i:i+1] = (x[:,:,i:i+1]-t)*si
+                x_in[:, :, :-1] = x_in[:, :, 1:]
+                x_in[:, :, -1:] = z[:, :, i:i+1]
+                if logdet is not None:
+                    dlogdet = log_s.sum()
+                    logdet = logdet - dlogdet
+            if logdet is not None:
+                return z, logdet
+            else:
+                return z
+
+def test_ar():
+    b_size = 32
+    c_size = 40
+    h_size = 128
+    t_size = 1024
+    ar = ARFlow(c_size, h_size, zero_init=False)
+    x = torch.randn(b_size, c_size, t_size)
+    z, ld = ar(x[:, :c_size, :], None, 0)
+    x2 = ar(z, None, invert=True)
+    print(f'cond: {(x[:, :c_size, :]-x2).pow(2).sum()}, {ld/b_size}')
+    x = torch.randn(b_size, h_size+c_size, t_size)
+    z, ld = ar(x[:, :c_size, :], x[:, c_size:, :], 0)
+    x2 = ar(z, x[:, c_size:, :], invert=True)
+    print(f'cond: {(x[:, :c_size, :]-x2).pow(2).sum()}, {ld/b_size}')
 
 
 if __name__ == "__main__":
@@ -265,4 +332,9 @@ if __name__ == "__main__":
     if kind == 'affine' or is_all:
         print('affile', '*'*50)
         test_ac()
+        print('*'*60)
+
+    if kind == 'ar' or is_all:
+        print('ar', '*'*50)
+        test_ar()
         print('*'*60)

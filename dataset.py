@@ -212,7 +212,7 @@ class JvsParallelMgcc(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         i = index + self.ut_min
-        ut_path = 'VOICEACTRESS100_{:03}.mgcc.npy'.format(i)
+        ut_path = 'VOICEACTRESS100_{:03}.mcep.npy'.format(i)
 
         path_x, path_y = [self.map_path(idx, ut_path) for idx in np.random.permutation(self.n_speakers) if self.map_path(idx, ut_path).exists()][:2]
         x = np.load(path_x)
@@ -246,7 +246,7 @@ class JvsNonparallelMcep(torch.utils.data.Dataset):
 
     def map_path(self, index, sp):
         i = index + self.ut_min
-        return self.root / sp / 'parallel100/wav24kHz16bit' / 'VOICEACTRESS100_{:03}.mgcc.npy'.format(i)
+        return self.root / sp / 'parallel100/wav24kHz16bit' / 'VOICEACTRESS100_{:03}.mcep.npy'.format(i)
 
     def load_mgcc(self, path):
         mgcc = np.load(path)
@@ -300,7 +300,7 @@ class JvsTwoParallelMcep(torch.utils.data.Dataset):
     def map_path(self, sp, ut):
         i = sp + self.sp_min
         j = ut + self.ut_min
-        return self.root / f'jvs{i:03}' / 'parallel100/wav24kHz16bit' / f'VOICEACTRESS100_{j:03}.mgcc.npy'
+        return self.root / f'jvs{i:03}' / 'parallel100/wav24kHz16bit' / f'VOICEACTRESS100_{j:03}.mcep.npy'
 
     def __getitem__(self, index):
         si, sj, ui, uj = self.indeces(index)
