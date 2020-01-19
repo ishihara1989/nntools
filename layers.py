@@ -37,8 +37,9 @@ class ResBlock1d(nn.Module):
         return x + r
 
 class DenseResBlocks1d(nn.Module):
-    def __init__(self, n_channels, dilations):
+    def __init__(self, n_channels, dilations, use_skip=True):
         super(DenseResBlocks1d, self).__init__()
+        self.use_skip = use_skip
         self.n_layers = len(dilations)
         self.convs = nn.ModuleList()
         self.skips = nn.ModuleList()
@@ -48,36 +49,46 @@ class DenseResBlocks1d(nn.Module):
                 utils.wn_xavier(nn.Conv1d(n_channels, 2*n_channels, 3, dilation=dilation)),
                 Func(F.glu, dim=1)
             ))
-            last_c = 4*n_channels if i < self.n_layers -1 else 2*n_channels
+            last_c = 4*n_channels if use_skip and i < self.n_layers -1 else 2*n_channels
             self.skips.append(nn.Sequential(
                 utils.wn_xavier(nn.Conv1d(n_channels, last_c, 1)),
                 Func(F.glu, dim=1)
             ))
 
-    # TODO: scale and bias is ignored??
     def forward(self, x, scale=None, bias=None):
         rs = x
         if scale is not None:
             scales = scale.chunk(self.n_layers, dim=1)
         if bias is not None:
             biases = bias.chunk(self.n_layers, dim=1)
-        for i in range(self.n_layers):
-            rs = self.convs[i](rs)
-            if scale is not None:
-                rs = rs * scales[i]
-            if bias is not None:
-                rs = rs + biases[i]
-            rs = self.skips[i](rs)
 
-            if i < self.n_layers-1:
-                rs, skip = rs.chunk(2, dim=1)
-                if i==0:
-                    out = skip
+        if self.use_skip:
+            for i in range(self.n_layers):
+                rs = self.convs[i](rs)
+                if scale is not None:
+                    rs = rs * scales[i]
+                if bias is not None:
+                    rs = rs + biases[i]
+                rs = self.skips[i](rs)
+
+                if i < self.n_layers-1:
+                    rs, skip = rs.chunk(2, dim=1)
+                    if i==0:
+                        out = skip
+                    else:
+                        out = out + skip
                 else:
-                    out = out + skip
-            else:
-                out = out + rs
-        return out
+                    out = out + rs
+            return out
+        else:
+            for i in range(self.n_layers):
+                cond = self.convs[i](rs)
+                if scale is not None:
+                    cond = cond * scales[i]
+                if bias is not None:
+                    cond = cond + biases[i]
+                rs = rs + self.skips[i](cond)
+            return rs
 
 class InfusedResBlock1d(nn.Module):
     def __init__(self, base_dim):
