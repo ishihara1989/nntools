@@ -20,6 +20,39 @@ class Func(nn.Module):
     def __repr__(self):
         return 'Func(func={})'.format(self.func.__name__)
 
+
+class CausalResBlock1d(nn.Module):
+    def __init__(self, in_channels, hidden_channels=None):
+        if hidden_channels is None:
+            hidden_channels = in_channels
+        self.pad = nn.ConstantPad1d((2, 0), 0.0)
+        self.input = nn.Sequential(
+            utils.wn_xavier(nn.Conv1d(in_channels, 2*hidden_channels, 3)),
+            Func(F.glu, dim=1)
+        )
+        self.output = nn.Sequential(
+            utils.wn_xavier(nn.Conv1d(hidden_channels, 2*in_channels, 1)),
+            Func(F.glu, dim=1)
+        )
+
+    def forward(self, x, scale=None, bias=None):
+        rs = self.input(self.pad(x))
+        if scale is ot None:
+            rs = rs * scale
+        if bias is not None:
+            rs = rs + bias
+        rs = self.output(rs)
+        return x + rs
+
+    def step(self, x):
+        rs = self.input(x)
+        if scale is ot None:
+            rs = rs * scale
+        if bias is not None:
+            rs = rs + bias
+        rs = self.output(rs)
+        return x[..., -1:] + rs
+
 class ResBlock1d(nn.Module):
     def __init__(self, channels):
         super().__init__(channels)
