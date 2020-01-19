@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 import utils
 
-__all__ = ['ChannelShuffle', 'AffineCoupling']
+__all__ = ['ChannelShuffle', 'AffineCoupling', 'ARFlow']
 
 class ChannelShuffle(nn.Module):
     """
@@ -239,11 +239,14 @@ class ARFlow(nn.Module):
         if zero_init:
             self.output.weight.data[...] = 0.0
             self.output.bias.data[...] = 0.0
-        self.alpha = nn.Parameter(torch.ones(out_channels)).unsqueeze(0).unsqueeze(2)
-        self.beta = nn.Parameter(torch.zeros(out_channels)).unsqueeze(0).unsqueeze(2)
+        self.alpha = nn.Parameter(torch.zeros(1, out_channels, 1))
+        self.beta = nn.Parameter(torch.zeros(1, out_channels, 1))
 
         self.inner_channels = inner_channels
         self.out_channels = out_channels
+
+    def p(self):
+        print(self.alpha.device)
 
     def forward(self, x, cond=None, logdet=None, invert=False):
         if not invert:
