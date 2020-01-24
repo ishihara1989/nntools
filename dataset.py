@@ -1,9 +1,7 @@
 from pathlib import Path
 import random
 
-import librosa
 import numpy as np
-import numpy.random
 import scipy.io.wavfile as wavfile
 import torch
 import torch.utils.data
@@ -259,7 +257,6 @@ class JvsNonparallelMcep(torch.utils.data.Dataset):
             mgcc = np.pad(mgcc, [(0, 0), (offset, self.t_size - mgcc.shape[-1]-offset)], 'constant')
         return mgcc
 
-
 class JvsTwoParallelMcep(torch.utils.data.Dataset):
     def __init__(self, root, sp_min=1, sp_max=90, ut_min=1, ut_max=90, verbose=False):
         self.root = Path(root)
@@ -316,6 +313,32 @@ class JvsTwoParallelMcep(torch.utils.data.Dataset):
 
         return [np.load(p) for p in paths]
 
+class SourceFilterDataset(torch.utils.data.Dataset):
+    def __init__(self, audio_root, feature_root, sp_min=1, sp_max=90, ut_min=1, ut_max=90):
+        self.audio_root = Path(audio_root)
+        self.feature_root = Path(feature_root)
+        self.sp_min = sp_min
+        self.sp_max = sp_max
+        self.ut_min = ut_min
+        self.ut_max = ut_max
+        sps = [p for p in self.audio_root.glob('jvs*') if p.name <= f'jvs{sp_max:03}' and p.name >= f'jvs{sp_min:03}']
+        audios = []
+        for sp in sps:
+            audios.extend([p for p in sp.glob('parallel100/wav24kHz16bit/VOICEACTRESS100_*.wav') if p.name <= f'VOICEACTRESS100_{ut_max:03}.wav' and p.name >= f'VOICEACTRESS100_{ut_min:03}.wav'])
+        self.audios = audios
+
+    def __len__(self):
+        return len(self.audios)
+
+    def __getitem__(self, index):
+        audio_path = self.audios[index]
+        rel = audio_path.relative_to(self.audio_root)
+        audio = wavfile.read(audio_path)[1]/32768.0
+        mcep = np.load(self.feature_root / rel.with_suffix('.mcep.npy'))
+        c0 = np.load(self.feature_root / rel.with_suffix('.c0.npy'))
+        f0 = np.load(self.feature_root / rel.with_suffix('.f0.npy'))
+        ap = np.load(self.feature_root / rel.with_suffix('.ap.npy'))
+        return audio, f0, c0, mcep, ap
 
 class VCTKParallel(torch.utils.data.Dataset):
     def __init__(self, root, sp_min=225, sp_max=343, ut_min=9, ut_max=24, verbose=False):

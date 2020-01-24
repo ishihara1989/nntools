@@ -37,16 +37,16 @@ class CausalResBlock1d(nn.Module):
 
     def forward(self, x, scale=None, bias=None):
         rs = self.input(self.pad(x))
-        if scale is ot None:
+        if scale is not None:
             rs = rs * scale
         if bias is not None:
             rs = rs + bias
         rs = self.output(rs)
         return x + rs
 
-    def step(self, x):
+    def step(self, x, scale=None, bias=None):
         rs = self.input(x)
-        if scale is ot None:
+        if scale is not None:
             rs = rs * scale
         if bias is not None:
             rs = rs + bias
