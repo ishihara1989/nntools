@@ -21,7 +21,8 @@ def mcep_dir(srcroot, tgtroot, n_mcep=40, alpha=0.42):
         mcep_path = tgt_stem.with_suffix('.mcep.npy')
         c0_path = tgt_stem.with_suffix('.c0.npy')
         f0_path = tgt_stem.with_suffix('.f0.npy')
-        if mcep_path.exists() and c0_path.exists() and f0_path.exists():
+        ap_path = tgt_stem.with_suffix('.ap.npy')
+        if mcep_path.exists() and c0_path.exists() and f0_path.exists() and ap_path.exists():
             print('skip')
             continue
 
@@ -29,13 +30,15 @@ def mcep_dir(srcroot, tgtroot, n_mcep=40, alpha=0.42):
         x = (wav/32768.0).astype(np.float64)
         f0, sp, ap = pyworld.wav2world(x.astype(np.float64), sr)
         mfcc = pysptk.sp2mc(sp, n_mcep, alpha)
-        f0, mfcc = f0.astype(np.float32), mfcc.T.astype(np.float32)
+        f0, mfcc, ap = f0.astype(np.float32), mfcc.T.astype(np.float32), ap.T.astype(np.float32)
         c0 = mfcc[0, :]
         mfcc = np.ascontiguousarray(mfcc[1:, :])
+        ap = ap[192, :]
 
         np.save(mcep_path, mfcc)
         np.save(c0_path, c0)
         np.save(f0_path, f0)
+        np.save(ap_path, ap)
         print(tgt_stem, flush=True)
 
 
