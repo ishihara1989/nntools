@@ -7,15 +7,23 @@ from numba import jit
 from torch.autograd import Function
 
 from torch.utils.cpp_extension import load
-try:
-    import os.path
-    root = Path(__file__).resolve().parent
-    dtw_cuda = load(name='dtw_cuda', sources=[root/'soft_dtw_src/dtw_cuda.cpp', root/'soft_dtw_src/dtw_cuda_kernel.cu'])
-    DTW_CUDA_SUCCEED = True
-except Exception as e:
-    DTW_CUDA_SUCCEED = False
-    print(e)
-    print('cuda DTW load failed')
+
+class Loader():
+    def __init__(self):
+        self.DTW_CUDA_SUCCEED = False
+        self.dtw_cuda = None
+    def load(self):
+        if self.dtw_cuda is None:
+            try:
+                root = Path(__file__).resolve().parent
+                self.dtw_cuda = load(name='dtw_cuda', sources=[root/'soft_dtw_src/dtw_cuda.cpp', root/'soft_dtw_src/dtw_cuda_kernel.cu'])
+                self.DTW_CUDA_SUCCEED = True
+            except Exception as e:
+                self.DTW_CUDA_SUCCEED = False
+                print(e)
+                print('cuda DTW load failed')
+
+loader = Loader()
 
 @jit(nopython = True)
 def compute_softdtw(D, gamma):
@@ -90,21 +98,24 @@ class _SoftDTW(Function):
 class _SoftDTWCuda(Function):
     @staticmethod
     def forward(ctx, D, gamma):
-        R = dtw_cuda.forward(D, gamma)
+        R = loader.dtw_cuda.forward(D, gamma)
         ctx.save_for_backward(D, R, torch.as_tensor(gamma))
         return R[:, -1, -1]
 
     @staticmethod
     def backward(ctx, grad_output):
-        E = dtw_cuda.backward(*ctx.saved_tensors)
+        E = loader.dtw_cuda.backward(*ctx.saved_tensors)
         return grad_output[:, None, None] * E, None
 
 class SoftDTW(torch.nn.Module):
     def __init__(self, gamma=1.0, normalize=False, cuda=True, save_memory=True):
         super(SoftDTW, self).__init__()
+        if cuda:
+            loader.load()
+        self.use_cuda = cuda
         self.normalize = normalize
-        self.gamma=gamma
-        self.save_memory=save_memory
+        self.gamma = gamma
+        self.save_memory = save_memory
 
     def calc_distance_matrix(self, x, y):
         if self.save_memory:
@@ -117,7 +128,7 @@ class SoftDTW(torch.nn.Module):
             return torch.pow(x[:, :, :, None]- y[:, :, None, :], 2).sum(dim=1)
 
     def forward(self, x, y):
-        func_dtw = _SoftDTWCuda.apply if DTW_CUDA_SUCCEED and x.is_cuda else _SoftDTW.apply
+        func_dtw = _SoftDTWCuda.apply if loader.DTW_CUDA_SUCCEED and self.use_cuda and x.is_cuda else _SoftDTW.apply
         assert len(x.shape) == len(y.shape)
         squeeze = False
         if len(x.shape) < 3:
