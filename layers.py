@@ -169,6 +169,73 @@ class LinearResBlock(nn.Module):
         return x + r
 
 
+class ComplexComv1d(nn.Module):
+    def __init__(self, in_channel, out_channel, kernel_size, stride=1, padding=0, dilation=1):
+        super().__init__()
+        n = np.sqrt(2/(in_channel+out_channel)/3)
+        wr = torch.randn(out_channel, in_channel, kernel_size)*n
+        wi = torch.randn(out_channel, in_channel, kernel_size)*n
+        g = (wr**2 + wi**2).sum(dim=[1, 2], keepdim=True).sqrt()
+        wr /= g
+        wi /= g
+        self.weight_g = torch.nn.Parameter(g)
+        self.weight_r = torch.nn.Parameter(wr)
+        self.weight_i = torch.nn.Parameter(wi)
+        self.bias = torch.zeros(out_channel*2)
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+
+    def forward(self, x):
+        wr = self.weight_g * self.weight_r
+        wi = self.weight_g * self.weight_i
+        w = torch.cat([torch.cat([wr, -wi], dim=1), torch.cat([wi, wr], dim=1)], dim=0)
+        return F.conv1d(x, w, self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
+
+
+class STFT(nn.Module):
+    def __init__(self, win_length, hop_length=None, n_fft=None):
+        super().__init__()
+        self.window = torch.hamming_window(win_length)
+        if hop_length is None:
+            hop_length = win_length//4
+        if n_fft is None:
+            n_fft = win_length
+        self.hop_length = hop_length
+        self.n_fft = n_fft
+
+    def forward(self, x):
+        return torch.stft(x, self.n_fft, hop_length=self.hop_length, window=self.window, center=False)
+
+
+class ISTFT(nn.Module):
+    def __init__(self, win_length, hop_length=None, n_fft=None):
+        super().__init__()
+        window = torch.hamming_window(win_length)
+        if hop_length is None:
+            hop_length = win_length//4
+        if n_fft is None:
+            n_fft = win_length
+        # window = window.view([-1, hop_length])
+        # window = window / (window**2).sum(dim=0, keepdim=True)
+        # window = window.view(win_length)
+        self.win_length = win_length
+        self.window = window
+        self.hop_length = hop_length
+        self.n_fft = n_fft
+        self.ola = torch.eye(win_length)[:, None, :]
+
+    def forward(self, z):
+        z = z.permute(0, 2, 1, 3)
+        sig = torch.irfft(z, signal_ndim=1, signal_sizes=(self.n_fft, ))
+        sig = sig[:, :, :self.win_length] * self.window
+        sig = sig.permute(0, 2, 1)
+        sig = F.conv_transpose1d(sig, self.ola, stride=self.hop_length, padding=0)[:, 0, :]
+        win = self.window.pow(2).view(self.n_fft, 1).repeat((1, z.size(1))).unsqueeze(0)
+        win = F.conv_transpose1d(win, self.ola, stride=self.hop_length, padding=0)[:, 0, :]
+        return sig/win
+
+
 class MemoryNet(nn.Module):
     def __init__(self, n_head=1, gamma=None):
         super().__init__()
@@ -272,6 +339,7 @@ if __name__ == "__main__":
         ret = sa(q,k,v, mask)
         print(ret.size())
         print(sa.softmax(q, k).size())
+
     if kind == 'vtln' or is_all:
         b_size = 4
         m_size = 40
@@ -281,3 +349,23 @@ if __name__ == "__main__":
         alpha = 0.2 * torch.ones(b_size, t_size)
         ret = vtln(z, alpha)
         print(ret.size())
+
+    if kind == 'complex':
+        x = torch.as_tensor([1.0, 0.0], dtype=torch.float32)[None, :, None]
+        c = ComplexComv1d(1, 2, 1)
+        y = c(x)
+        print(y)
+
+    if kind == 'stft':
+        x = torch.randn(1, 32)
+        s = STFT(8, 2)
+        istft = ISTFT(8, 2)
+        z = s(x)
+        print(z.size())
+        y = istft(z)
+        print(x.size(), y.size())
+        print(x)
+        print(y)
+        e = torch.eye(8)
+        z = torch.randn(1, 8, 13)
+        print(F.conv_transpose1d(z, e[:, None, :], stride=2).size())

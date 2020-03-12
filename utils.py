@@ -54,6 +54,15 @@ def kl_normal(x, eps=1e-4):
     kl = -sigma.logdet().sum() + sigma.diagonal(dim1=1, dim2=2).sum() + mean.pow(2).sum()
     return 0.5*(kl - x.size(1))
 
+def stft2cspec(x):
+    b, t, c, _ = x.size()
+    return x.permute(0, 3, 2, 1).contiguous().view(b, 2*c, t)
+
+def cspec2stft(z):
+    b, c, t = z.size()
+    return z.view(b, 2, c//2, t).permute(0, 3, 2, 1).contiguous()
+
+
 if __name__ == "__main__":
     x = torch.randn(1,3,10000)
     print(kl_normal(x))
