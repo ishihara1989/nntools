@@ -205,7 +205,10 @@ class STFT(nn.Module):
         self.n_fft = n_fft
 
     def forward(self, x):
-        return torch.stft(x, self.n_fft, hop_length=self.hop_length, window=self.window, center=False)
+        z = torch.stft(x, self.n_fft, hop_length=self.hop_length, window=self.window, center=True)
+        z = z.permute(0, 3, 1, 2).contiguous()
+        b, _, c, t = z.size()
+        return z.view(b, 2*c, t)
 
 
 class ISTFT(nn.Module):
@@ -216,9 +219,6 @@ class ISTFT(nn.Module):
             hop_length = win_length//4
         if n_fft is None:
             n_fft = win_length
-        # window = window.view([-1, hop_length])
-        # window = window / (window**2).sum(dim=0, keepdim=True)
-        # window = window.view(win_length)
         self.win_length = win_length
         self.window = window
         self.hop_length = hop_length
@@ -226,13 +226,14 @@ class ISTFT(nn.Module):
         self.ola = torch.eye(win_length)[:, None, :]
 
     def forward(self, z):
-        z = z.permute(0, 2, 1, 3)
+        b, c, t = z.size()
+        z = z.contiguous().view(b, 2, c//2, t).permute(0, 3, 2, 1).contiguous()
         sig = torch.irfft(z, signal_ndim=1, signal_sizes=(self.n_fft, ))
         sig = sig[:, :, :self.win_length] * self.window
         sig = sig.permute(0, 2, 1)
-        sig = F.conv_transpose1d(sig, self.ola, stride=self.hop_length, padding=0)[:, 0, :]
+        sig = F.conv_transpose1d(sig, self.ola, stride=self.hop_length, padding=0)[:, 0, self.win_length//2:-self.win_length//2]
         win = self.window.pow(2).view(self.n_fft, 1).repeat((1, z.size(1))).unsqueeze(0)
-        win = F.conv_transpose1d(win, self.ola, stride=self.hop_length, padding=0)[:, 0, :]
+        win = F.conv_transpose1d(win, self.ola, stride=self.hop_length, padding=0)[:, 0, self.win_length//2:-self.win_length//2]
         return sig/win
 
 
@@ -350,22 +351,61 @@ if __name__ == "__main__":
         ret = vtln(z, alpha)
         print(ret.size())
 
-    if kind == 'complex':
-        x = torch.as_tensor([1.0, 0.0], dtype=torch.float32)[None, :, None]
-        c = ComplexComv1d(1, 2, 1)
-        y = c(x)
-        print(y)
+    if kind == 'stft' or is_all:
+        import torch.optim
+        x = torch.randn(1, 32, requires_grad=True)
+        class Model(nn.Module):
+            def __init__(self, n=8, h=32):
+                super().__init__()
+                self.stft = STFT(n, n//4)
+                self.istft = ISTFT(n, n//4)
+                self.layers = nn.Sequential(
+                    ComplexComv1d(n//2+1, h, 3, padding=1),
+                    nn.GELU(),
+                    ComplexComv1d(h, h, 3, padding=1),
+                    nn.GELU(),
+                    ComplexComv1d(h, n//2+1, 3, padding=1)
+                )
 
-    if kind == 'stft':
-        x = torch.randn(1, 32)
-        s = STFT(8, 2)
+            def forward(self, x):
+                z = self.stft(x)
+                z = self.layers(z)
+                return z
+        stft = STFT(8, 2)
         istft = ISTFT(8, 2)
-        z = s(x)
+        z = stft(x)
         print(z.size())
+        c = ComplexComv1d(5, 5, 3, padding=1)
+
+        z2 = c(z)
         y = istft(z)
+        y2 = istft(z2)
         print(x.size(), y.size())
-        print(x)
-        print(y)
-        e = torch.eye(8)
-        z = torch.randn(1, 8, 13)
-        print(F.conv_transpose1d(z, e[:, None, :], stride=2).size())
+        print((x-y).pow(2).sum())
+        print(y2)
+
+        x = nn.Parameter(torch.randn(1, 512, requires_grad=True))
+        model = Model(16, 32)
+        opt = torch.optim.Adam(list(model.parameters())+[x], lr=1e-4)
+
+        tgt = torch.zeros(1, 9, 1)+1e-8
+        tgt[0, 2, 0] = 1
+        print(tgt.data)
+        for k, v in model.state_dict().items():
+            print(k, v.size())
+
+        for n in range(50000):
+            opt.zero_grad()
+            y = model(x)
+            y = model.istft(y)
+            y = model.stft(y)
+            r, i = y.chunk(2, dim=1)
+            a = (r**2 + i**2).clamp(1e-8)
+            loss = (a.log() - tgt.log()).pow(2).mean()
+            loss.backward()
+            if n % 100 == 99:
+                print(loss.data)
+            opt.step()
+
+        print(a.data.T)
+        
