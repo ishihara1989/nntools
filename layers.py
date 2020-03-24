@@ -6,7 +6,16 @@ import torch.nn.functional as F
 
 import utils
 
-__all__ = ['Func', 'DenseResBlocks1d', 'InfusedResBlock1d', 'StackedInfusedResBlock1d', 'LinearResBlock', 'MemoryNet', 'VTLN']
+__all__ = [
+    "Func",
+    "DenseResBlocks1d",
+    "InfusedResBlock1d",
+    "StackedInfusedResBlock1d",
+    "LinearResBlock",
+    "MemoryNet",
+    "VTLN",
+]
+
 
 class Func(nn.Module):
     def __init__(self, func, **kwargs):
@@ -18,7 +27,7 @@ class Func(nn.Module):
         return self.func(x, **self.kwargs)
 
     def __repr__(self):
-        return 'Func(func={})'.format(self.func.__name__)
+        return "Func(func={})".format(self.func.__name__)
 
 
 class CausalResBlock1d(nn.Module):
@@ -27,12 +36,12 @@ class CausalResBlock1d(nn.Module):
             hidden_channels = in_channels
         self.pad = nn.ConstantPad1d((2, 0), 0.0)
         self.input = nn.Sequential(
-            utils.wn_xavier(nn.Conv1d(in_channels, 2*hidden_channels, 3)),
-            Func(F.glu, dim=1)
+            utils.wn_xavier(nn.Conv1d(in_channels, 2 * hidden_channels, 3)),
+            Func(F.glu, dim=1),
         )
         self.output = nn.Sequential(
-            utils.wn_xavier(nn.Conv1d(hidden_channels, 2*in_channels, 1)),
-            Func(F.glu, dim=1)
+            utils.wn_xavier(nn.Conv1d(hidden_channels, 2 * in_channels, 1)),
+            Func(F.glu, dim=1),
         )
 
     def forward(self, x, scale=None, bias=None):
@@ -53,21 +62,23 @@ class CausalResBlock1d(nn.Module):
         rs = self.output(rs)
         return x[..., -1:] + rs
 
+
 class ResBlock1d(nn.Module):
     def __init__(self, channels):
         super().__init__(channels)
         self.update = nn.Sequential(
             nn.ReflectionPad2d(1),
-            utils.wn_xavier(nn.Conv2d(channels, 2*channels, 3, bias=False)),
+            utils.wn_xavier(nn.Conv2d(channels, 2 * channels, 3, bias=False)),
             Func(F.glu, dim=1),
             nn.ReflectionPad2d(1),
-            utils.wn_xavier(nn.Conv2d(channels, 2*channels, 3, bias=False)),
-            Func(F.glu, dim=1)
+            utils.wn_xavier(nn.Conv2d(channels, 2 * channels, 3, bias=False)),
+            Func(F.glu, dim=1),
         )
 
     def forward(self, x):
         r = self.update(x)
         return x + r
+
 
 class DenseResBlocks1d(nn.Module):
     def __init__(self, n_channels, dilations, use_skip=True):
@@ -77,16 +88,24 @@ class DenseResBlocks1d(nn.Module):
         self.convs = nn.ModuleList()
         self.skips = nn.ModuleList()
         for i, dilation in enumerate(dilations):
-            self.convs.append(nn.Sequential(
-                nn.ReplicationPad1d(dilation),
-                utils.wn_xavier(nn.Conv1d(n_channels, 2*n_channels, 3, dilation=dilation)),
-                Func(F.glu, dim=1)
-            ))
-            last_c = 4*n_channels if use_skip and i < self.n_layers -1 else 2*n_channels
-            self.skips.append(nn.Sequential(
-                utils.wn_xavier(nn.Conv1d(n_channels, last_c, 1)),
-                Func(F.glu, dim=1)
-            ))
+            self.convs.append(
+                nn.Sequential(
+                    nn.ReplicationPad1d(dilation),
+                    utils.wn_xavier(
+                        nn.Conv1d(n_channels, 2 * n_channels, 3, dilation=dilation)
+                    ),
+                    Func(F.glu, dim=1),
+                )
+            )
+            last_c = (
+                4 * n_channels if use_skip and i < self.n_layers - 1 else 2 * n_channels
+            )
+            self.skips.append(
+                nn.Sequential(
+                    utils.wn_xavier(nn.Conv1d(n_channels, last_c, 1)),
+                    Func(F.glu, dim=1),
+                )
+            )
 
     def forward(self, x, scale=None, bias=None):
         rs = x
@@ -104,9 +123,9 @@ class DenseResBlocks1d(nn.Module):
                     rs = rs + biases[i]
                 rs = self.skips[i](rs)
 
-                if i < self.n_layers-1:
+                if i < self.n_layers - 1:
                     rs, skip = rs.chunk(2, dim=1)
-                    if i==0:
+                    if i == 0:
                         out = skip
                     else:
                         out = out + skip
@@ -123,26 +142,34 @@ class DenseResBlocks1d(nn.Module):
                 rs = rs + self.skips[i](cond)
             return rs
 
+
 class InfusedResBlock1d(nn.Module):
     def __init__(self, base_dim):
         super(InfusedResBlock1d, self).__init__()
         self.update = nn.Sequential(
-            utils.wn_xavier(nn.Conv1d(base_dim, 2*base_dim, 3, padding=1, bias=False)),
+            utils.wn_xavier(
+                nn.Conv1d(base_dim, 2 * base_dim, 3, padding=1, bias=False)
+            ),
             Func(F.glu, dim=1),
-            utils.wn_xavier(nn.Conv1d(base_dim, 2*base_dim, 3, padding=1, bias=False)),
+            utils.wn_xavier(
+                nn.Conv1d(base_dim, 2 * base_dim, 3, padding=1, bias=False)
+            ),
             Func(F.glu, dim=1),
         )
         self.alpha = nn.Parameter(torch.ones(1, base_dim, 1))
 
     def forward(self, x, w, b):
-        r = self.update(self.alpha*torch.sigmoid(w)*x+b)
+        r = self.update(self.alpha * torch.sigmoid(w) * x + b)
         return x + r
+
 
 class StackedInfusedResBlock1d(nn.Module):
     def __init__(self, base_dim, layers):
         super(StackedInfusedResBlock1d, self).__init__()
-        self.layers = nn.ModuleList([InfusedResBlock1d(base_dim) for _ in range(layers)])
-    
+        self.layers = nn.ModuleList(
+            [InfusedResBlock1d(base_dim) for _ in range(layers)]
+        )
+
     def forward(self, x, cond):
         l = len(self.layers)
         w, b = torch.chunk(cond, 2, dim=1)
@@ -150,7 +177,7 @@ class StackedInfusedResBlock1d(nn.Module):
         bs = torch.chunk(b, l, dim=1)
         r = x
         for i, layer in enumerate(self.layers):
-            r = layer(r, ws[i][:,:,None], bs[i][:,:,None])
+            r = layer(r, ws[i][:, :, None], bs[i][:, :, None])
         return r
 
 
@@ -158,9 +185,9 @@ class LinearResBlock(nn.Module):
     def __init__(self, base_dim):
         super(LinearResBlock, self).__init__()
         self.update = nn.Sequential(
-            utils.wn_xavier(nn.Linear(base_dim, 2*base_dim, bias=False)),
+            utils.wn_xavier(nn.Linear(base_dim, 2 * base_dim, bias=False)),
             Func(F.glu, dim=-1),
-            utils.wn_xavier(nn.Linear(base_dim, 2*base_dim, bias=False)),
+            utils.wn_xavier(nn.Linear(base_dim, 2 * base_dim, bias=False)),
             Func(F.glu, dim=-1),
         )
 
@@ -170,18 +197,20 @@ class LinearResBlock(nn.Module):
 
 
 class ComplexComv1d(nn.Module):
-    def __init__(self, in_channel, out_channel, kernel_size, stride=1, padding=0, dilation=1):
+    def __init__(
+        self, in_channel, out_channel, kernel_size, stride=1, padding=0, dilation=1
+    ):
         super().__init__()
-        n = np.sqrt(2/(in_channel+out_channel)/3)
-        wr = torch.randn(out_channel, in_channel, kernel_size)*n
-        wi = torch.randn(out_channel, in_channel, kernel_size)*n
-        g = (wr**2 + wi**2).sum(dim=[1, 2], keepdim=True).sqrt()
+        n = np.sqrt(2 / (in_channel + out_channel) / 3)
+        wr = torch.randn(out_channel, in_channel, kernel_size) * n
+        wi = torch.randn(out_channel, in_channel, kernel_size) * n
+        g = (wr ** 2 + wi ** 2).sum(dim=[1, 2], keepdim=True).sqrt()
         wr /= g
         wi /= g
         self.weight_g = torch.nn.Parameter(g)
         self.weight_r = torch.nn.Parameter(wr)
         self.weight_i = torch.nn.Parameter(wi)
-        self.bias = torch.zeros(out_channel*2)
+        self.bias = torch.zeros(out_channel * 2)
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
@@ -190,7 +219,14 @@ class ComplexComv1d(nn.Module):
         wr = self.weight_g * self.weight_r
         wi = self.weight_g * self.weight_i
         w = torch.cat([torch.cat([wr, -wi], dim=1), torch.cat([wi, wr], dim=1)], dim=0)
-        return F.conv1d(x, w, self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
+        return F.conv1d(
+            x,
+            w,
+            self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+        )
 
 
 class STFT(nn.Module):
@@ -198,17 +234,19 @@ class STFT(nn.Module):
         super().__init__()
         self.window = torch.hamming_window(win_length)
         if hop_length is None:
-            hop_length = win_length//4
+            hop_length = win_length // 4
         if n_fft is None:
             n_fft = win_length
         self.hop_length = hop_length
         self.n_fft = n_fft
 
     def forward(self, x):
-        z = torch.stft(x, self.n_fft, hop_length=self.hop_length, window=self.window, center=True)
+        z = torch.stft(
+            x, self.n_fft, hop_length=self.hop_length, window=self.window, center=True
+        )
         z = z.permute(0, 3, 1, 2).contiguous()
         b, _, c, t = z.size()
-        return z.view(b, 2*c, t)
+        return z.view(b, 2 * c, t)
 
 
 class ISTFT(nn.Module):
@@ -216,7 +254,7 @@ class ISTFT(nn.Module):
         super().__init__()
         window = torch.hamming_window(win_length)
         if hop_length is None:
-            hop_length = win_length//4
+            hop_length = win_length // 4
         if n_fft is None:
             n_fft = win_length
         self.win_length = win_length
@@ -227,14 +265,18 @@ class ISTFT(nn.Module):
 
     def forward(self, z):
         b, c, t = z.size()
-        z = z.contiguous().view(b, 2, c//2, t).permute(0, 3, 2, 1).contiguous()
-        sig = torch.irfft(z, signal_ndim=1, signal_sizes=(self.n_fft, ))
-        sig = sig[:, :, :self.win_length] * self.window
+        z = z.contiguous().view(b, 2, c // 2, t).permute(0, 3, 2, 1).contiguous()
+        sig = torch.irfft(z, signal_ndim=1, signal_sizes=(self.n_fft,))
+        sig = sig[:, :, : self.win_length] * self.window
         sig = sig.permute(0, 2, 1)
-        sig = F.conv_transpose1d(sig, self.ola, stride=self.hop_length, padding=0)[:, 0, self.win_length//2:-self.win_length//2]
+        sig = F.conv_transpose1d(sig, self.ola, stride=self.hop_length, padding=0)[
+            :, 0, self.win_length // 2 : -self.win_length // 2
+        ]
         win = self.window.pow(2).view(self.n_fft, 1).repeat((1, z.size(1))).unsqueeze(0)
-        win = F.conv_transpose1d(win, self.ola, stride=self.hop_length, padding=0)[:, 0, self.win_length//2:-self.win_length//2]
-        return sig/win
+        win = F.conv_transpose1d(win, self.ola, stride=self.hop_length, padding=0)[
+            :, 0, self.win_length // 2 : -self.win_length // 2
+        ]
+        return sig / win
 
 
 class MemoryNet(nn.Module):
@@ -256,24 +298,23 @@ class MemoryNet(nn.Module):
         v_shape = v.size()
         if n_head > 1:
             q, k, v = q.contiguous(), k.contiguous(), v.contiguous()
-            q = q.view(*q_shape[:-2], n_head, q_shape[-2]//n_head, q_shape[-1])
-            k = k.view(*k_shape[:-2], n_head, k_shape[-2]//n_head, k_shape[-1])
-            v = v.view(*v_shape[:-2], n_head, v_shape[-2]//n_head, v_shape[-1])
+            q = q.view(*q_shape[:-2], n_head, q_shape[-2] // n_head, q_shape[-1])
+            k = k.view(*k_shape[:-2], n_head, k_shape[-2] // n_head, k_shape[-1])
+            v = v.view(*v_shape[:-2], n_head, v_shape[-2] // n_head, v_shape[-1])
             if mask is not None:
-                mask_shape = mask.size()
                 mask = mask.unsqueeze(-3)
         q = F.normalize(q, dim=-2)
         k = F.normalize(k, dim=-2)
 
-        qk = alpha * torch.matmul(q.transpose(-1, -2), k) # bxhxmxn
+        qk = alpha * torch.matmul(q.transpose(-1, -2), k)  # bxhxmxn
         if mask is not None:
-            sm = F.softmax(mask+qk, dim=-1) # bxmxn
+            sm = F.softmax(mask + qk, dim=-1)  # bxmxn
         else:
-            sm = F.softmax(qk, dim=-1) # bxmxn
-        ret = (sm.unsqueeze(-3) * v.unsqueeze(-2)).sum(dim=-1) # bxcxmxn -> bxcxm
+            sm = F.softmax(qk, dim=-1)  # bxmxn
+        ret = (sm.unsqueeze(-3) * v.unsqueeze(-2)).sum(dim=-1)  # bxcxmxn -> bxcxm
         if n_head > 1:
             ret = ret.view(-1, v_shape[-2], q_shape[-1])
-        if hasattr(self, 'gamma'):
+        if hasattr(self, "gamma"):
             return self.gamma * ret
         else:
             return ret
@@ -284,30 +325,31 @@ class MemoryNet(nn.Module):
         k_shape = k.size()
         if n_head > 1:
             q, k = q.contiguous(), k.contiguous()
-            q = q.view(*q_shape[:-2], n_head, q_shape[-2]//n_head, q_shape[-1])
-            k = k.view(*k_shape[:-2], n_head, k_shape[-2]//n_head, k_shape[-1])
+            q = q.view(*q_shape[:-2], n_head, q_shape[-2] // n_head, q_shape[-1])
+            k = k.view(*k_shape[:-2], n_head, k_shape[-2] // n_head, k_shape[-1])
             if mask is not None:
-                mask_shape = mask.size()
                 mask = mask.unsqueeze(-3)
         q = F.normalize(q, dim=-2)
         k = F.normalize(k, dim=-2)
-        qk = alpha * torch.matmul(q.transpose(-1, -2), k) # bxhxmxn
+        qk = alpha * torch.matmul(q.transpose(-1, -2), k)  # bxhxmxn
         if mask is not None:
-            return F.softmax(mask+qk, dim=-1) # bxmxn
+            return F.softmax(mask + qk, dim=-1)  # bxmxn
         else:
-            return F.softmax(qk, dim=-1) # bxmxn
+            return F.softmax(qk, dim=-1)  # bxmxn
 
 
 class VTLN(nn.Module):
     def __init__(self, n_mcep):
         super().__init__()
-        a = np.zeros((n_mcep, n_mcep, 2*n_mcep+1), dtype=np.float32)
-        for k in range(1, n_mcep+1):
-            for l in range(1, n_mcep+1):
-                for n in range(n_mcep+1):
-                    if l-k<=n<=l:
-                        a[k-1,l-1,2*n+k-l] = comb(l,n) * comb(k+n-1, l-1) * (-1)**(n+k+l)
-        self.register_buffer('a_3d', torch.Tensor(a))
+        a = np.zeros((n_mcep, n_mcep, 2 * n_mcep + 1), dtype=np.float32)
+        for k in range(1, n_mcep + 1):
+            for l in range(1, n_mcep + 1):
+                for n in range(n_mcep + 1):
+                    if l - k <= n <= l:
+                        a[k - 1, l - 1, 2 * n + k - l] = (
+                            comb(l, n) * comb(k + n - 1, l - 1) * (-1) ** (n + k + l)
+                        )
+        self.register_buffer("a_3d", torch.Tensor(a))
         self.n_mcep = n_mcep
 
     def forward(self, mcep, alpha):
@@ -316,32 +358,35 @@ class VTLN(nn.Module):
         b_size = alpha.size(0)
         t_size = alpha.size(-1)
         one = torch.ones(b_size, t_size, dtype=alpha.dtype, device=alpha.device)
-        ones = one[..., None].expand([*one.size(), 2*self.n_mcep]) * alpha[..., None] #bxtxd
+        ones = (
+            one[..., None].expand([*one.size(), 2 * self.n_mcep]) * alpha[..., None]
+        )  # bxtxd
         alpha_v = torch.cumprod(torch.cat([one[..., None], ones], dim=-1), dim=-1)
-        warp_mat = torch.einsum('btd,xyd->btxy', alpha_v, self.a_3d) # bxtxmxm
-        return torch.einsum('bmt,btnm->bnt', mcep, warp_mat)
+        warp_mat = torch.einsum("btd,xyd->btxy", alpha_v, self.a_3d)  # bxtxmxm
+        return torch.einsum("bmt,btnm->bnt", mcep, warp_mat)
 
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv)>1:
+
+    if len(sys.argv) > 1:
         kind = sys.argv[1]
     else:
-        kind = 'all'
+        kind = "all"
 
-    is_all = kind == 'all'
-    if kind == 'memory' or is_all:
+    is_all = kind == "all"
+    if kind == "memory" or is_all:
         sa = MemoryNet(n_head=2)
-        q = torch.randn(7,1,10,3)
-        k = torch.randn(1,11,10,4)
-        v = torch.randn(1,11,20,4)
+        q = torch.randn(7, 1, 10, 3)
+        k = torch.randn(1, 11, 10, 4)
+        v = torch.randn(1, 11, 20, 4)
         mask = torch.zeros(7, 11, 3, 4)
-        mask[...,-1] = -np.inf
-        ret = sa(q,k,v, mask)
+        mask[..., -1] = -np.inf
+        ret = sa(q, k, v, mask)
         print(ret.size())
         print(sa.softmax(q, k).size())
 
-    if kind == 'vtln' or is_all:
+    if kind == "vtln" or is_all:
         b_size = 4
         m_size = 40
         t_size = 64
@@ -351,26 +396,29 @@ if __name__ == "__main__":
         ret = vtln(z, alpha)
         print(ret.size())
 
-    if kind == 'stft' or is_all:
+    if kind == "stft" or is_all:
         import torch.optim
+
         x = torch.randn(1, 32, requires_grad=True)
+
         class Model(nn.Module):
             def __init__(self, n=8, h=32):
                 super().__init__()
-                self.stft = STFT(n, n//4)
-                self.istft = ISTFT(n, n//4)
+                self.stft = STFT(n, n // 4)
+                self.istft = ISTFT(n, n // 4)
                 self.layers = nn.Sequential(
-                    ComplexComv1d(n//2+1, h, 3, padding=1),
+                    ComplexComv1d(n // 2 + 1, h, 3, padding=1),
                     nn.GELU(),
                     ComplexComv1d(h, h, 3, padding=1),
                     nn.GELU(),
-                    ComplexComv1d(h, n//2+1, 3, padding=1)
+                    ComplexComv1d(h, n // 2 + 1, 3, padding=1),
                 )
 
             def forward(self, x):
                 z = self.stft(x)
                 z = self.layers(z)
                 return z
+
         stft = STFT(8, 2)
         istft = ISTFT(8, 2)
         z = stft(x)
@@ -381,14 +429,14 @@ if __name__ == "__main__":
         y = istft(z)
         y2 = istft(z2)
         print(x.size(), y.size())
-        print((x-y).pow(2).sum())
+        print((x - y).pow(2).sum())
         print(y2)
 
         x = nn.Parameter(torch.randn(1, 512, requires_grad=True))
         model = Model(16, 32)
-        opt = torch.optim.Adam(list(model.parameters())+[x], lr=1e-4)
+        opt = torch.optim.Adam(list(model.parameters()) + [x], lr=1e-4)
 
-        tgt = torch.zeros(1, 9, 1)+1e-8
+        tgt = torch.zeros(1, 9, 1) + 1e-8
         tgt[0, 2, 0] = 1
         print(tgt.data)
         for k, v in model.state_dict().items():
@@ -400,7 +448,7 @@ if __name__ == "__main__":
             y = model.istft(y)
             y = model.stft(y)
             r, i = y.chunk(2, dim=1)
-            a = (r**2 + i**2).clamp(1e-8)
+            a = (r ** 2 + i ** 2).clamp(1e-8)
             loss = (a.log() - tgt.log()).pow(2).mean()
             loss.backward()
             if n % 100 == 99:
@@ -408,4 +456,3 @@ if __name__ == "__main__":
             opt.step()
 
         print(a.data.T)
-        
