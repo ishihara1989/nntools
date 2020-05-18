@@ -86,6 +86,14 @@ def kl_normal(x, eps=1e-4):
     return 0.5 * (kl - x.size(1))
 
 
+def pdist(x, y):
+    xx = x.pow(2).sum(dim=1)  # S, T
+    yy = y.pow(2).sum(dim=1)  # S, T'
+    xy = x.transpose(1, 2).matmul(y)  # S, T, T'
+    pdist = xx[:, :, None] + yy[:, None, :] - 2 * xy
+    return pdist
+
+
 def stft2cspec(x):
     b, t, c, _ = x.size()
     return x.permute(0, 3, 2, 1).contiguous().view(b, 2 * c, t)
